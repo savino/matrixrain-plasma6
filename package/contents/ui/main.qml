@@ -51,6 +51,69 @@ WallpaperItem {
         url: ""
     }
 
+    // Connections component to handle WebSocket signals (QML best practice)
+    Connections {
+        target: mqttSocket
+        
+        function onStatusChanged() {
+            var status = mqttSocket.status
+            
+            if (status === WebSocket.Open) {
+                main.writeLog("✅ WebSocket Connected")
+                main.mqttConnecting = false
+                
+                // Send MQTT CONNECT packet
+                MQTTClient.sendConnectPacket()
+                
+                // Subscribe after a short delay to allow CONNACK
+                subscribeTimer.start()
+                
+            } else if (status === WebSocket.Closed || status === WebSocket.Error) {
+                main.writeLog("⚠️ WebSocket Closed")
+                main.mqttConnected = false
+                main.mqttConnecting = false
+                
+                // Auto-reconnect if MQTT is still enabled
+                if (main.mqttEnable) {
+                    reconnectTimer.start()
+                }
+            }
+        }
+        
+        function onTextMessageReceived(message) {
+            // Some brokers might send text messages
+            main.writeLog("📨 Text message: " + message)
+            main.lastPayload = message
+            main.messageChars = []
+            for (var i = 0; i < message.length; i++) {
+                main.messageChars.push(message.charAt(i))
+            }
+            canvas.requestPaint()
+        }
+        
+        function onBinaryMessageReceived(message) {
+            // Handle MQTT binary packets
+            MQTTClient.handleBinaryMessage(message)
+        }
+        
+        function onErrorStringChanged() {
+            if (mqttSocket.errorString) {
+                main.writeLog("❌ WebSocket Error: " + mqttSocket.errorString)
+            }
+        }
+    }
+
+    // Timer to send SUBSCRIBE after CONNECT
+    Timer {
+        id: subscribeTimer
+        interval: 200
+        repeat: false
+        onTriggered: {
+            main.writeLog("🔔 Subscribing to topic: " + main.mqttTopic)
+            MQTTClient.sendSubscribePacket(main.mqttTopic)
+        }
+    }
+
     // MQTT connection management
     property bool _mqttConnectInProgress: false
 
@@ -85,22 +148,15 @@ WallpaperItem {
                 topic: main.mqttTopic,
                 
                 onConnect: function() {
-                    main.writeLog("✅ MQTT Connected")
+                    main.writeLog("✅ MQTT CONNACK received")
                     main.mqttConnected = true
-                    main.mqttConnecting = false
                     main._mqttConnectInProgress = false
                 },
                 
                 onDisconnect: function() {
                     main.writeLog("⚠️ MQTT Disconnected")
                     main.mqttConnected = false
-                    main.mqttConnecting = false
                     main._mqttConnectInProgress = false
-                    
-                    // Auto-reconnect if MQTT is still enabled
-                    if (main.mqttEnable) {
-                        reconnectTimer.start()
-                    }
                 },
                 
                 onMessage: function(topic, payload) {
@@ -118,12 +174,18 @@ WallpaperItem {
                 
                 onError: function(error) {
                     main.writeLog("❌ MQTT Error: " + error)
-                    main.mqttConnecting = false
                     main._mqttConnectInProgress = false
                 },
                 
                 onDebug: function(msg) {
                     main.writeLog("🔍 " + msg)
+                }
+            })
+            
+            // Clear the semaphore after a short delay
+            Qt.callLater(function() { 
+                if (main._mqttConnectInProgress && !main.mqttConnected) {
+                    main._mqttConnectInProgress = false
                 }
             })
         } catch (e) {
@@ -137,6 +199,7 @@ WallpaperItem {
         try {
             MQTTClient.disconnect()
             main.mqttConnected = false
+            main.mqttConnecting = false
         } catch (e) {
             main.writeLog("Error disconnecting: " + e.toString())
         }
