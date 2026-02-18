@@ -15,7 +15,7 @@ MQTTClient::MQTTClient(QObject *parent)
     connect(m_client, &QMqttClient::disconnected, this, &MQTTClient::onDisconnected);
     connect(m_client, &QMqttClient::errorChanged, this, &MQTTClient::onErrorChanged);
     connect(m_client, &QMqttClient::stateChanged, this, [this](QMqttClient::ClientState state) {
-        qDebug() << "MQTT Client state changed:" << state;
+        qDebug() << "📊 MQTT Client state changed:" << state;
     });
     
     qDebug() << "MQTTClient initialized, Qt version:" << qVersion();
@@ -88,7 +88,7 @@ void MQTTClient::connectToHost()
     }
 
     qDebug() << "========================================";
-    qDebug() << "Attempting MQTT connection:";
+    qDebug() << "🔌 Attempting MQTT connection:";
     qDebug() << "  Host:" << m_host;
     qDebug() << "  Port:" << m_port;
     qDebug() << "  Username:" << (m_username.isEmpty() ? "(none)" : m_username);
@@ -100,27 +100,44 @@ void MQTTClient::connectToHost()
     if (m_client->state() == QMqttClient::Connected) {
         qDebug() << "Already connected, disconnecting first...";
         m_client->disconnectFromHost();
-        // Wait for disconnection (synchronous approach)
         QEventLoop loop;
         connect(m_client, &QMqttClient::disconnected, &loop, &QEventLoop::quit);
-        QTimer::singleShot(1000, &loop, &QEventLoop::quit); // timeout
+        QTimer::singleShot(1000, &loop, &QEventLoop::quit);
         loop.exec();
     }
     
-    // Create fresh transport - Qt6 way
-    qDebug() << "Creating new QTcpSocket transport...";
+    // Create fresh transport
+    qDebug() << "🔧 Creating new QTcpSocket transport...";
     auto *transport = new QTcpSocket(m_client);
+    
+    // Monitor TCP socket for debugging
+    connect(transport, &QTcpSocket::connected, this, [this]() {
+        qDebug() << "✅ TCP Socket connected!";
+    });
+    
+    connect(transport, &QTcpSocket::disconnected, this, [this]() {
+        qDebug() << "❌ TCP Socket disconnected";
+    });
+    
+    connect(transport, &QTcpSocket::stateChanged, this, [](QAbstractSocket::SocketState state) {
+        qDebug() << "🔄 TCP Socket state:" << state;
+    });
+    
+    connect(transport, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred),
+            this, [](QAbstractSocket::SocketError error) {
+        qWarning() << "🔴 TCP Socket error:" << error;
+    });
     
     qDebug() << "Socket created, state:" << transport->state();
     
-    // Set transport first
-    qDebug() << "Setting transport on QMqttClient...";
+    // Set transport
+    qDebug() << "🔗 Setting transport on QMqttClient...";
     m_client->setTransport(transport, QMqttClient::AbstractSocket);
     
     qDebug() << "Transport set, pointer:" << m_client->transport();
     
-    // CRITICAL: Set connection parameters AFTER transport but BEFORE connectToHost
-    qDebug() << "Setting connection parameters on client...";
+    // Set connection parameters AFTER transport
+    qDebug() << "⚙️ Setting connection parameters...";
     m_client->setHostname(m_host);
     m_client->setPort(static_cast<quint16>(m_port));
     
@@ -132,16 +149,16 @@ void MQTTClient::connectToHost()
         m_client->setPassword(m_password);
     }
     
-    qDebug() << "Client configured:";
+    qDebug() << "✓ Client configured:";
     qDebug() << "  Hostname:" << m_client->hostname();
     qDebug() << "  Port:" << m_client->port();
     qDebug() << "  Username:" << m_client->username();
-    qDebug() << "  State:" << m_client->state();
     
-    qDebug() << "Calling connectToHost()...";
+    qDebug() << "🚀 Calling connectToHost()...";
     m_client->connectToHost();
     
-    qDebug() << "connectToHost() called, state:" << m_client->state();
+    qDebug() << "⏳ connectToHost() called, state:" << m_client->state();
+    qDebug() << "⏳ Waiting for connection... (TCP socket state:" << transport->state() << ")";
     qDebug() << "========================================";
 }
 
@@ -157,7 +174,7 @@ void MQTTClient::disconnectFromHost()
 
 void MQTTClient::onConnected()
 {
-    qDebug() << "✅ Successfully connected to MQTT broker";
+    qDebug() << "🎉✅ Successfully connected to MQTT broker!";
     emit connectedChanged();
     updateSubscription();
 }
@@ -204,7 +221,6 @@ void MQTTClient::onErrorChanged(QMqttClient::ClientError error)
             break;
         case QMqttClient::TransportInvalid:
             errorString = "Transport invalid";
-            qWarning() << "🔴 TRANSPORT INVALID ERROR";
             break;
         case QMqttClient::ProtocolViolation:
             errorString = "Protocol violation";
@@ -232,7 +248,7 @@ void MQTTClient::updateSubscription()
 
     // Subscribe to new topic
     qDebug() << "📡 Subscribing to topic:" << m_topic;
-    m_subscription = m_client->subscribe(m_topic, 0); // QoS 0
+    m_subscription = m_client->subscribe(m_topic, 0);
 
     if (m_subscription) {
         connect(m_subscription, &QMqttSubscription::messageReceived,
