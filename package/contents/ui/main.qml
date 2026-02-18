@@ -41,12 +41,22 @@ WallpaperItem {
         console.log("[MQTTRain] " + msg)
     }
 
-    // Native C++ MQTT Client
+    // Native C++ MQTT Client (Qt6 Mqtt)
     MQTTClient {
         id: mqttClient
 
         onConnectedChanged: {
-            main.writeLog(mqttClient.connected ? "✅ MQTT Connected" : "❌ MQTT Disconnected")
+            if (connected) {
+                main.writeLog("✅ MQTT Connected")
+                // Subscribe after connection
+                subscribeTimer.start()
+            } else {
+                main.writeLog("❌ MQTT Disconnected")
+                // Auto-reconnect
+                if (main.mqttEnable) {
+                    reconnectTimer.start()
+                }
+            }
             canvas.requestPaint()
         }
 
@@ -64,19 +74,8 @@ WallpaperItem {
             canvas.requestPaint()
         }
 
-        onErrorOccurred: function(error) {
+        onConnectionError: function(error) {
             main.writeLog("❌ MQTT Error: " + error)
-        }
-
-        onDebugMessage: function(msg) {
-            main.writeLog(msg)
-        }
-
-        onDisconnected: {
-            main.writeLog("⚠️ MQTT disconnected, reconnecting...")
-            if (main.mqttEnable) {
-                reconnectTimer.start()
-            }
         }
     }
 
@@ -84,19 +83,21 @@ WallpaperItem {
     function mqttConnect() {
         if (!main.mqttEnable) {
             main.writeLog("MQTT disabled")
-            mqttClient.disconnect()
+            mqttClient.disconnectFromHost()
             return
         }
 
         main.writeLog("Connecting to " + main.mqttHost + ":" + main.mqttPort + "...")
-        mqttClient.connectToHost(main.mqttHost, main.mqttPort, main.mqttUsername, main.mqttPassword, 60)
-    }
-
-    function mqttSubscribe() {
-        if (mqttClient.connected) {
-            main.writeLog("Subscribing to: " + main.mqttTopic)
-            mqttClient.subscribe(main.mqttTopic, 0)
-        }
+        
+        // Set connection parameters
+        mqttClient.host = main.mqttHost
+        mqttClient.port = main.mqttPort
+        mqttClient.username = main.mqttUsername
+        mqttClient.password = main.mqttPassword
+        mqttClient.topic = main.mqttTopic
+        
+        // Connect
+        mqttClient.connectToHost()
     }
 
     // Auto-reconnect on unexpected disconnection
@@ -113,20 +114,13 @@ WallpaperItem {
     }
 
     // Subscribe after connection established
-    Connections {
-        target: mqttClient
-        function onConnectedChanged() {
-            if (mqttClient.connected) {
-                subscribeTimer.start()
-            }
-        }
-    }
-
     Timer {
         id: subscribeTimer
         interval: 100
         repeat: false
-        onTriggered: mqttSubscribe()
+        onTriggered: {
+            main.writeLog("Subscribing to: " + mqttClient.topic)
+        }
     }
 
     Canvas {
@@ -194,12 +188,12 @@ WallpaperItem {
                 ctx.fillRect(8, 8, 480, 110)
                 ctx.font = "bold 13px monospace"
                 ctx.fillStyle = "#00ff00"
-                ctx.fillText("⚙️ MQTT Rain Debug (Native C++)", 14, 26)
+                ctx.fillText("⚙️ MQTT Rain Debug (Qt6 Mqtt)", 14, 26)
                 ctx.font = "12px monospace"
                 ctx.fillStyle = mqttClient.connected ? "#00ff00" : "#ff4444"
                 ctx.fillText("MQTT: " + (mqttClient.connected ? "✅ CONNECTED" : "❌ DISCONNECTED"), 14, 46)
                 ctx.fillStyle = "#00ccff"
-                ctx.fillText("Broker: " + main.mqttHost + ":" + main.mqttPort + " (TCP native)", 14, 62)
+                ctx.fillText("Broker: " + main.mqttHost + ":" + main.mqttPort + " (Qt6 Mqtt)", 14, 62)
                 ctx.fillText("Topic:  " + main.mqttTopic, 14, 78)
                 ctx.fillStyle = "#ffff00"
                 var last = (main.lastPayload || "(waiting...)").toString()
@@ -220,22 +214,22 @@ WallpaperItem {
     onGlitchChanceChanged: canvas.requestPaint()
     onDebugOverlayChanged: canvas.requestPaint()
 
-    onMqttEnableChanged: mqttEnable ? mqttConnect() : mqttClient.disconnect()
+    onMqttEnableChanged: mqttEnable ? mqttConnect() : mqttClient.disconnectFromHost()
     onMqttHostChanged:   { if (mqttEnable) mqttConnect() }
     onMqttPortChanged:   { if (mqttEnable) mqttConnect() }
-    onMqttTopicChanged:  { if (mqttEnable && mqttClient.connected) { mqttClient.disconnect(); mqttConnect() } }
+    onMqttTopicChanged:  { if (mqttEnable && mqttClient.connected) { mqttClient.disconnectFromHost(); mqttConnect() } }
 
     Component.onCompleted: {
-        main.writeLog("=== Matrix Rain MQTT Wallpaper (C++ Native) ===")
+        main.writeLog("=== Matrix Rain MQTT Wallpaper (Qt6 Mqtt) ===")
         main.writeLog("Qt version: " + Qt.version)
         canvas.initDrops()
         if (main.mqttEnable) {
-            main.writeLog("MQTT enabled — broker: " + main.mqttHost + ":" + main.mqttPort + " (native TCP)")
+            main.writeLog("MQTT enabled — broker: " + main.mqttHost + ":" + main.mqttPort + " (Qt6 native)")
             Qt.callLater(mqttConnect)
         } else {
             main.writeLog("MQTT disabled — random Matrix characters")
         }
     }
 
-    Component.onDestruction: { mqttClient.disconnect() }
+    Component.onDestruction: { mqttClient.disconnectFromHost() }
 }
