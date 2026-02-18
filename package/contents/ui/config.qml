@@ -21,7 +21,8 @@ KirigamiLayouts.FormLayout {
     property alias cfg_mqttTopic: mqttTopic.text
     property alias cfg_mqttUsername: mqttUsername.text
     property alias cfg_mqttPassword: mqttPassword.text
-    property alias cfg_debugOverlay: debugEnable.checked
+    property alias cfg_debugOverlay: debugOverlay.checked
+    property alias cfg_mqttDebug: mqttDebug.checked
 
     QC.SpinBox {
         id: fontSpin; from:8; to:48; stepSize:1
@@ -59,7 +60,7 @@ KirigamiLayouts.FormLayout {
     }
     QC.CheckBox {
         id: mqttEnable
-        KirigamiLayouts.FormData.label: qsTr("Enable MQTT (WebSocket)")
+        KirigamiLayouts.FormData.label: qsTr("Enable MQTT")
     }
     QC.TextField {
         id: mqttHost
@@ -67,7 +68,7 @@ KirigamiLayouts.FormLayout {
     }
     QC.SpinBox {
         id: mqttPort; from:1; to:65535; stepSize:1
-        KirigamiLayouts.FormData.label: qsTr("MQTT Port (WebSocket)")
+        KirigamiLayouts.FormData.label: qsTr("MQTT Port")
     }
     QC.TextField {
         id: mqttPath
@@ -87,7 +88,11 @@ KirigamiLayouts.FormLayout {
         KirigamiLayouts.FormData.label: qsTr("MQTT Password (optional)")
     }
     QC.CheckBox {
-        id: debugEnable
+        id: debugOverlay
         KirigamiLayouts.FormData.label: qsTr("Show Debug Overlay")
+    }
+    QC.CheckBox {
+        id: mqttDebug
+        KirigamiLayouts.FormData.label: qsTr("Debug MQTT logging")
     }
 }

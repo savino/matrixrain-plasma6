@@ -15,5 +15,6 @@
     <Entry key="mqttUsername" type="String"><Default>mqtt_user</Default></Entry>
     <Entry key="mqttPassword" type="String"><Default>mqtt_user</Default></Entry>
     <Entry key="debugOverlay" type="Bool"><Default>false</Default></Entry>
+    <Entry key="mqttDebug" type="Bool"><Default>false</Default></Entry>
   </Group>
 </Config>

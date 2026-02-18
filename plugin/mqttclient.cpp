@@ -69,7 +69,6 @@ void MQTTClient::setUsername(const QString &username)
 void MQTTClient::setPassword(const QString &password)
 {
     if (m_password != password) {
-        qDebug() << "setPassword: [" << (password.isEmpty() ? "empty" : "set") << "]";
         m_password = password;
         m_client->setPassword(password);
         emit passwordChanged();
@@ -100,13 +99,8 @@ void MQTTClient::connectToHost()
         return;
     }
 
-    qDebug() << "==== connectToHost ====";
-    qDebug() << "  host:"  << m_host;
-    qDebug() << "  port:"  << m_port;
-    qDebug() << "  user:"  << m_username;
-    qDebug() << "  topic:" << m_topic;
+    qDebug() << "==== connectToHost ==== host:" << m_host << "port:" << m_port << "user:" << m_username;
 
-    // Clean up previous socket
     if (m_socket) {
         m_socket->disconnect();
         m_socket->abort();
@@ -114,51 +108,32 @@ void MQTTClient::connectToHost()
         m_socket = nullptr;
     }
 
-    // Step 1: Create socket and connect TCP manually
     m_socket = new QTcpSocket(this);
 
     connect(m_socket, &QTcpSocket::stateChanged, [](QAbstractSocket::SocketState s) {
-        qDebug() << "🔄 TCP state:" << s;
+        qDebug() << "🔄 TCP:" << s;
     });
-
     connect(m_socket, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred),
             this, [this](QAbstractSocket::SocketError e) {
         qWarning() << "🔴 TCP error:" << e << m_socket->errorString();
         emit connectionError("TCP: " + m_socket->errorString());
     });
 
-    connect(m_socket, &QTcpSocket::bytesWritten, [](qint64 bytes) {
-        qDebug() << "↑ Bytes written to broker:" << bytes;
-    });
-
-    connect(m_socket, &QTcpSocket::readyRead, [this]() {
-        QByteArray data = m_socket->peek(m_socket->bytesAvailable());
-        qDebug() << "↓ Broker raw reply (" << data.size() << "bytes):" << data.toHex();
-    });
-
-    // Step 2: Once TCP connects, attach as IODevice and send MQTT CONNECT
+    // Once TCP connects, attach as IODevice and send MQTT CONNECT
     connect(m_socket, &QTcpSocket::connected, this, [this]() {
-        qDebug() << "✅ TCP connected! Setting IODevice transport and sending MQTT CONNECT...";
-
-        // Set MQTT parameters
+        qDebug() << "✅ TCP connected — attaching IODevice transport";
         m_client->setHostname(m_host);
         m_client->setPort(static_cast<quint16>(m_port));
         m_client->setUsername(m_username);
         m_client->setPassword(m_password);
-
-        // Use pre-connected socket as IODevice
-        // QMqttClient will immediately send MQTT CONNECT packet
         m_client->setTransport(m_socket, QMqttClient::IODevice);
-
         m_connackTimer->start();
         m_client->connectToHost();
-
-        qDebug() << "  MQTT state after connectToHost():" << m_client->state();
+        qDebug() << "  MQTT state:" << m_client->state();
     });
 
-    qDebug() << "  Connecting TCP to" << m_host << ":" << m_port;
+    qDebug() << "  Connecting TCP...";
     m_socket->connectToHost(m_host, static_cast<quint16>(m_port));
-    qDebug() << "======================";
 }
 
 void MQTTClient::disconnectFromHost()
@@ -169,9 +144,8 @@ void MQTTClient::disconnectFromHost()
         m_subscription = nullptr;
     }
     m_client->disconnectFromHost();
-    if (m_socket) {
+    if (m_socket)
         m_socket->abort();
-    }
 }
 
 void MQTTClient::onConnected()

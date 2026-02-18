@@ -22,8 +22,9 @@ WallpaperItem {
     property string mqttTopic: (main.configuration.mqttTopic !== undefined ? main.configuration.mqttTopic : "zigbee2mqtt/#").trim()
     property string mqttUsername: (main.configuration.mqttUsername || "").trim()
     property string mqttPassword: (main.configuration.mqttPassword !== undefined && main.configuration.mqttPassword !== null) ? main.configuration.mqttPassword : ""
+    property bool mqttDebug: main.configuration.mqttDebug !== undefined ? main.configuration.mqttDebug : false
 
-    // MQTT state
+    // UI state
     property var messageChars: []
     property int messageTick: 0
     property string lastTopic: ""
@@ -41,6 +42,11 @@ WallpaperItem {
         console.log("[MQTTRain] " + msg)
     }
 
+    function writeDebug(msg) {
+        if (main.mqttDebug)
+            console.log("[MQTTRain][debug] " + msg)
+    }
+
     MQTTClient {
         id: mqttClient
 
@@ -56,7 +62,7 @@ WallpaperItem {
         }
 
         onMessageReceived: function(topic, payload) {
-            main.writeLog("📨 [" + topic + "] " + payload.substring(0, 80))
+            main.writeDebug("📨 [" + topic + "] " + payload.substring(0, 80))
             main.lastTopic = topic
             main.lastPayload = payload
             main.messagesReceived++
@@ -184,12 +190,12 @@ WallpaperItem {
         Component.onCompleted: initDrops()
     }
 
-    onFontSizeChanged:    { canvas.initDrops(); canvas.requestPaint() }
-    onSpeedChanged:       { timer.interval = 1000 / main.speed }
-    onColorModeChanged:   canvas.requestPaint()
-    onSingleColorChanged: canvas.requestPaint()
+    onFontSizeChanged:     { canvas.initDrops(); canvas.requestPaint() }
+    onSpeedChanged:        { timer.interval = 1000 / main.speed }
+    onColorModeChanged:    canvas.requestPaint()
+    onSingleColorChanged:  canvas.requestPaint()
     onPaletteIndexChanged: canvas.requestPaint()
-    onJitterChanged:      canvas.requestPaint()
+    onJitterChanged:       canvas.requestPaint()
     onGlitchChanceChanged: canvas.requestPaint()
     onDebugOverlayChanged: canvas.requestPaint()
 
@@ -202,11 +208,10 @@ WallpaperItem {
         main.writeLog("=== Matrix Rain MQTT Wallpaper ===")
         main.writeLog("MQTT host=[" + main.mqttHost + "] port=" + main.mqttPort + " topic=[" + main.mqttTopic + "]")
         canvas.initDrops()
-        if (main.mqttEnable) {
+        if (main.mqttEnable)
             Qt.callLater(mqttConnect)
-        } else {
+        else
             main.writeLog("MQTT disabled — random Matrix characters")
-        }
     }
 
     Component.onDestruction: { mqttClient.disconnectFromHost() }
