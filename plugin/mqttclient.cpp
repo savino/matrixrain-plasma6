@@ -111,18 +111,20 @@ void MQTTClient::connectToHost()
         loop.exec();
     }
     
-    // Create fresh transport
+    // Create fresh transport - Qt6 way
     qDebug() << "Creating new QTcpSocket transport...";
     auto *transport = new QTcpSocket(m_client);
     
     // Debug socket
     qDebug() << "Socket created, state:" << transport->state();
+    qDebug() << "Socket parent:" << transport->parent();
     
-    // Set transport
-    qDebug() << "Setting transport on QMqttClient...";
-    m_client->setTransport(transport, QMqttClient::IODevice);
+    // Set transport - Qt6.10+ doesn't need the IODevice parameter
+    qDebug() << "Setting transport on QMqttClient (without IODevice parameter)...";
+    m_client->setTransport(transport, QMqttClient::AbstractSocket);
     
     qDebug() << "Client state after setTransport:" << m_client->state();
+    qDebug() << "Transport pointer:" << m_client->transport();
     qDebug() << "Calling connectToHost()...";
     
     m_client->connectToHost();
@@ -193,6 +195,7 @@ void MQTTClient::onErrorChanged(QMqttClient::ClientError error)
             qWarning() << "🔴 TRANSPORT INVALID ERROR - This means QMqttClient's transport is null or invalid";
             qWarning() << "   Client state:" << m_client->state();
             qWarning() << "   Protocol version:" << m_client->protocolVersion();
+            qWarning() << "   Transport pointer:" << m_client->transport();
             break;
         case QMqttClient::ProtocolViolation:
             errorString = "Protocol violation";
