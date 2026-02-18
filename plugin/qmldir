@@ -1,0 +1,4 @@
+module ObsidianReq.MQTTRain
+plugin mqttrainplugin
+classname MQTTClient
+typeinfo plugins.qmltypes
