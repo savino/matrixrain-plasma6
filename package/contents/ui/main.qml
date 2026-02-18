@@ -30,6 +30,7 @@ WallpaperItem {
     property string lastPayload: ""
     property bool debugOverlay: main.configuration.debugOverlay !== undefined ? main.configuration.debugOverlay : false
     property int messagesReceived: 0
+    property bool mqttInitialized: false  // Track initialization state
 
     property var palettes: [
         ["#00ff00","#ff00ff","#00ffff","#ff0000","#ffff00","#0000ff"],
@@ -52,8 +53,8 @@ WallpaperItem {
                 subscribeTimer.start()
             } else {
                 main.writeLog("❌ MQTT Disconnected")
-                // Auto-reconnect
-                if (main.mqttEnable) {
+                // Auto-reconnect only if initialized and enabled
+                if (main.mqttInitialized && main.mqttEnable) {
                     reconnectTimer.start()
                 }
             }
@@ -98,6 +99,20 @@ WallpaperItem {
         
         // Connect
         mqttClient.connectToHost()
+    }
+
+    // Initial connection timer (wait for transport initialization)
+    Timer {
+        id: initTimer
+        interval: 500  // 500ms delay to allow QMqttClient transport initialization
+        repeat: false
+        onTriggered: {
+            main.mqttInitialized = true
+            if (main.mqttEnable) {
+                main.writeLog("🚀 Starting MQTT connection...")
+                mqttConnect()
+            }
+        }
     }
 
     // Auto-reconnect on unexpected disconnection
@@ -185,20 +200,22 @@ WallpaperItem {
             // Debug overlay
             if (main.debugOverlay) {
                 ctx.fillStyle = "rgba(0,0,0,0.85)"
-                ctx.fillRect(8, 8, 480, 110)
+                ctx.fillRect(8, 8, 480, 130)
                 ctx.font = "bold 13px monospace"
                 ctx.fillStyle = "#00ff00"
                 ctx.fillText("⚙️ MQTT Rain Debug (Qt6 Mqtt)", 14, 26)
                 ctx.font = "12px monospace"
+                ctx.fillStyle = main.mqttInitialized ? "#00ff00" : "#ffaa00"
+                ctx.fillText("Init: " + (main.mqttInitialized ? "✅ Ready" : "⏳ Waiting..."), 14, 46)
                 ctx.fillStyle = mqttClient.connected ? "#00ff00" : "#ff4444"
-                ctx.fillText("MQTT: " + (mqttClient.connected ? "✅ CONNECTED" : "❌ DISCONNECTED"), 14, 46)
+                ctx.fillText("MQTT: " + (mqttClient.connected ? "✅ CONNECTED" : "❌ DISCONNECTED"), 14, 62)
                 ctx.fillStyle = "#00ccff"
-                ctx.fillText("Broker: " + main.mqttHost + ":" + main.mqttPort + " (Qt6 Mqtt)", 14, 62)
-                ctx.fillText("Topic:  " + main.mqttTopic, 14, 78)
+                ctx.fillText("Broker: " + main.mqttHost + ":" + main.mqttPort + " (Qt6 Mqtt)", 14, 78)
+                ctx.fillText("Topic:  " + main.mqttTopic, 14, 94)
                 ctx.fillStyle = "#ffff00"
                 var last = (main.lastPayload || "(waiting...)").toString()
-                ctx.fillText("Last:   " + (last.length > 52 ? last.substring(0, 49) + "..." : last), 14, 94)
-                ctx.fillText("Msgs: " + main.messagesReceived + "  |  Chars: " + main.messageChars.length, 14, 110)
+                ctx.fillText("Last:   " + (last.length > 52 ? last.substring(0, 49) + "..." : last), 14, 110)
+                ctx.fillText("Msgs: " + main.messagesReceived + "  |  Chars: " + main.messageChars.length, 14, 126)
             }
         }
 
@@ -214,10 +231,15 @@ WallpaperItem {
     onGlitchChanceChanged: canvas.requestPaint()
     onDebugOverlayChanged: canvas.requestPaint()
 
-    onMqttEnableChanged: mqttEnable ? mqttConnect() : mqttClient.disconnectFromHost()
-    onMqttHostChanged:   { if (mqttEnable) mqttConnect() }
-    onMqttPortChanged:   { if (mqttEnable) mqttConnect() }
-    onMqttTopicChanged:  { if (mqttEnable && mqttClient.connected) { mqttClient.disconnectFromHost(); mqttConnect() } }
+    // Only reconnect if already initialized (prevents startup race condition)
+    onMqttEnableChanged: {
+        if (main.mqttInitialized) {
+            mqttEnable ? mqttConnect() : mqttClient.disconnectFromHost()
+        }
+    }
+    onMqttHostChanged:   { if (main.mqttInitialized && mqttEnable) mqttConnect() }
+    onMqttPortChanged:   { if (main.mqttInitialized && mqttEnable) mqttConnect() }
+    onMqttTopicChanged:  { if (main.mqttInitialized && mqttEnable && mqttClient.connected) { mqttClient.disconnectFromHost(); mqttConnect() } }
 
     Component.onCompleted: {
         main.writeLog("=== Matrix Rain MQTT Wallpaper (Qt6 Mqtt) ===")
@@ -225,9 +247,11 @@ WallpaperItem {
         canvas.initDrops()
         if (main.mqttEnable) {
             main.writeLog("MQTT enabled — broker: " + main.mqttHost + ":" + main.mqttPort + " (Qt6 native)")
-            Qt.callLater(mqttConnect)
+            main.writeLog("⏳ Waiting 500ms for transport initialization...")
+            initTimer.start()  // Use timer instead of Qt.callLater
         } else {
             main.writeLog("MQTT disabled — random Matrix characters")
+            main.mqttInitialized = true  // Mark as initialized even if MQTT is disabled
         }
     }
 
