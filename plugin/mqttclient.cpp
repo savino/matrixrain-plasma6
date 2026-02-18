@@ -10,30 +10,28 @@ MQTTClient::MQTTClient(QObject *parent)
     , m_subscription(nullptr)
     , m_port(1883)
 {
-    // Connect signals
-    connect(m_client, &QMqttClient::connected, this, &MQTTClient::onConnected);
-    connect(m_client, &QMqttClient::disconnected, this, &MQTTClient::onDisconnected);
-    connect(m_client, &QMqttClient::errorChanged, this, &MQTTClient::onErrorChanged);
-    connect(m_client, &QMqttClient::stateChanged, this, [this](QMqttClient::ClientState state) {
-        qDebug() << "📊 MQTT Client state changed:" << state;
+    connect(m_client, &QMqttClient::connected,     this, &MQTTClient::onConnected);
+    connect(m_client, &QMqttClient::disconnected,  this, &MQTTClient::onDisconnected);
+    connect(m_client, &QMqttClient::errorChanged,  this, &MQTTClient::onErrorChanged);
+    connect(m_client, &QMqttClient::stateChanged,  this, [](QMqttClient::ClientState s) {
+        qDebug() << "📊 MQTT state:" << s;
     });
-    
-    qDebug() << "MQTTClient initialized, Qt version:" << qVersion();
+    qDebug() << "MQTTClient initialized, Qt:" << qVersion();
 }
 
 MQTTClient::~MQTTClient()
 {
-    if (m_client->state() == QMqttClient::Connected) {
+    if (m_client->state() == QMqttClient::Connected)
         m_client->disconnectFromHost();
-    }
 }
 
 void MQTTClient::setHost(const QString &host)
 {
-    if (m_host != host) {
-        qDebug() << "Setting host:" << host;
-        m_host = host;
-        m_client->setHostname(host);  // propagate immediately
+    QString v = host.trimmed();
+    if (m_host != v) {
+        qDebug() << "setHost:" << v;
+        m_host = v;
+        m_client->setHostname(v);
         emit hostChanged();
     }
 }
@@ -41,19 +39,20 @@ void MQTTClient::setHost(const QString &host)
 void MQTTClient::setPort(int port)
 {
     if (m_port != port) {
-        qDebug() << "Setting port:" << port;
+        qDebug() << "setPort:" << port;
         m_port = port;
-        m_client->setPort(static_cast<quint16>(port));  // propagate immediately
+        m_client->setPort(static_cast<quint16>(port));
         emit portChanged();
     }
 }
 
 void MQTTClient::setUsername(const QString &username)
 {
-    if (m_username != username) {
-        qDebug() << "Setting username:" << username;
-        m_username = username;
-        m_client->setUsername(username);  // propagate immediately
+    QString v = username.trimmed();
+    if (m_username != v) {
+        qDebug() << "setUsername:" << v;
+        m_username = v;
+        m_client->setUsername(v);
         emit usernameChanged();
     }
 }
@@ -61,18 +60,19 @@ void MQTTClient::setUsername(const QString &username)
 void MQTTClient::setPassword(const QString &password)
 {
     if (m_password != password) {
-        qDebug() << "Setting password: [" << (password.isEmpty() ? "empty" : "set") << "]";
+        qDebug() << "setPassword: [" << (password.isEmpty() ? "empty" : "set") << "]";
         m_password = password;
-        m_client->setPassword(password);  // propagate immediately
+        m_client->setPassword(password);
         emit passwordChanged();
     }
 }
 
 void MQTTClient::setTopic(const QString &topic)
 {
-    if (m_topic != topic) {
-        qDebug() << "Setting topic:" << topic;
-        m_topic = topic;
+    QString v = topic.trimmed();
+    if (m_topic != v) {
+        qDebug() << "setTopic: [" << v << "]";
+        m_topic = v;
         emit topicChanged();
         updateSubscription();
     }
@@ -86,68 +86,57 @@ bool MQTTClient::connected() const
 void MQTTClient::connectToHost()
 {
     if (m_host.isEmpty()) {
-        qWarning() << "Cannot connect: Host is empty";
+        qWarning() << "Cannot connect: host is empty";
         emit connectionError("Host is empty");
         return;
     }
 
-    qDebug() << "========================================";
-    qDebug() << "🔌 Attempting MQTT connection:";
-    qDebug() << "  Host:" << m_host;
-    qDebug() << "  Port:" << m_port;
-    qDebug() << "  Username:" << (m_username.isEmpty() ? "(none)" : m_username);
-    qDebug() << "  Password:" << (m_password.isEmpty() ? "(none)" : "[set]");
-    qDebug() << "  Topic:" << m_topic;
-    qDebug() << "  Current client state:" << m_client->state();
-    
-    // Check if already connected or connecting
+    qDebug() << "==== connectToHost ====";
+    qDebug() << "  host:"  << m_host;
+    qDebug() << "  port:"  << m_port;
+    qDebug() << "  user:"  << m_username;
+    qDebug() << "  topic:" << m_topic;
+    qDebug() << "  state:" << m_client->state();
+
     if (m_client->state() == QMqttClient::Connected) {
-        qDebug() << "Already connected, disconnecting first...";
         m_client->disconnectFromHost();
         QEventLoop loop;
         connect(m_client, &QMqttClient::disconnected, &loop, &QEventLoop::quit);
         QTimer::singleShot(1000, &loop, &QEventLoop::quit);
         loop.exec();
     }
-    
-    // Create fresh transport
-    qDebug() << "🔧 Creating new QTcpSocket transport...";
-    auto *transport = new QTcpSocket(m_client);
-    
-    // Monitor TCP socket for debugging
-    connect(transport, &QTcpSocket::connected, this, [this]() {
-        qDebug() << "✅ TCP Socket connected!";
+
+    // Fresh transport every time
+    auto *sock = new QTcpSocket(m_client);
+    connect(sock, &QTcpSocket::stateChanged, [](QAbstractSocket::SocketState s) {
+        qDebug() << "🔄 TCP state:" << s;
     });
-    connect(transport, &QTcpSocket::disconnected, this, [this]() {
-        qDebug() << "❌ TCP Socket disconnected";
+    connect(sock, &QTcpSocket::connected, []() {
+        qDebug() << "✅ TCP connected";
     });
-    connect(transport, &QTcpSocket::stateChanged, this, [](QAbstractSocket::SocketState state) {
-        qDebug() << "🔄 TCP Socket state:" << state;
+    connect(sock, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred),
+            [](QAbstractSocket::SocketError e) {
+        qWarning() << "🔴 TCP error:" << e;
     });
-    connect(transport, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred),
-            this, [](QAbstractSocket::SocketError error) {
-        qWarning() << "🔴 TCP Socket error:" << error;
-    });
-    
-    // Set transport
-    m_client->setTransport(transport, QMqttClient::AbstractSocket);
-    qDebug() << "Transport set, pointer:" << m_client->transport();
-    
-    // Ensure all parameters are set on m_client (already set via setters, but be explicit)
+
+    m_client->setTransport(sock, QMqttClient::AbstractSocket);
+
+    // Always re-apply parameters after new transport
     m_client->setHostname(m_host);
     m_client->setPort(static_cast<quint16>(m_port));
-    if (!m_username.isEmpty()) m_client->setUsername(m_username);
-    if (!m_password.isEmpty()) m_client->setPassword(m_password);
-    
-    qDebug() << "🚀 Calling connectToHost()...";
+    m_client->setUsername(m_username);
+    m_client->setPassword(m_password);
+
+    qDebug() << "  → hostname on client:" << m_client->hostname();
+    qDebug() << "  → port on client:"     << m_client->port();
+
     m_client->connectToHost();
-    qDebug() << "⏳ State after connectToHost():" << m_client->state();
-    qDebug() << "========================================";
+    qDebug() << "  state after call:" << m_client->state();
+    qDebug() << "======================";
 }
 
 void MQTTClient::disconnectFromHost()
 {
-    qDebug() << "Disconnecting from MQTT broker...";
     if (m_subscription) {
         m_subscription->unsubscribe();
         m_subscription = nullptr;
@@ -157,68 +146,60 @@ void MQTTClient::disconnectFromHost()
 
 void MQTTClient::onConnected()
 {
-    qDebug() << "🎉✅ Successfully connected to MQTT broker!";
+    qDebug() << "🎉 MQTT connected!";
     emit connectedChanged();
     updateSubscription();
 }
 
 void MQTTClient::onDisconnected()
 {
-    qDebug() << "❌ Disconnected from MQTT broker";
-    if (m_subscription) {
-        m_subscription = nullptr;
-    }
+    qDebug() << "❌ MQTT disconnected";
+    if (m_subscription) m_subscription = nullptr;
     emit connectedChanged();
 }
 
 void MQTTClient::onMessageReceived(const QMqttMessage &message)
 {
-    QString topic = message.topic().name();
-    QString payload = QString::fromUtf8(message.payload());
-    
-    qDebug() << "📨 MQTT message - Topic:" << topic << "Payload length:" << payload.length();
-    emit messageReceived(topic, payload);
+    emit messageReceived(message.topic().name(),
+                         QString::fromUtf8(message.payload()));
 }
 
 void MQTTClient::onErrorChanged(QMqttClient::ClientError error)
 {
-    if (error == QMqttClient::NoError)
-        return;
+    if (error == QMqttClient::NoError) return;
 
-    QString errorString;
-    switch (error) {
-        case QMqttClient::InvalidProtocolVersion: errorString = "Invalid protocol version"; break;
-        case QMqttClient::IdRejected:             errorString = "Client ID rejected"; break;
-        case QMqttClient::ServerUnavailable:      errorString = "Server unavailable"; break;
-        case QMqttClient::BadUsernameOrPassword:  errorString = "Bad username or password"; break;
-        case QMqttClient::NotAuthorized:          errorString = "Not authorized"; break;
-        case QMqttClient::TransportInvalid:       errorString = "Transport invalid"; break;
-        case QMqttClient::ProtocolViolation:      errorString = "Protocol violation"; break;
-        default:                                  errorString = "Unknown error"; break;
-    }
+    static const QMap<QMqttClient::ClientError, QString> errors = {
+        { QMqttClient::InvalidProtocolVersion, "Invalid protocol version" },
+        { QMqttClient::IdRejected,             "Client ID rejected" },
+        { QMqttClient::ServerUnavailable,      "Server unavailable" },
+        { QMqttClient::BadUsernameOrPassword,  "Bad username or password" },
+        { QMqttClient::NotAuthorized,          "Not authorized" },
+        { QMqttClient::TransportInvalid,       "Transport invalid" },
+        { QMqttClient::ProtocolViolation,      "Protocol violation" },
+    };
 
-    qWarning() << "⚠️ MQTT Error:" << errorString;
-    emit connectionError(errorString);
+    QString msg = errors.value(error, "Unknown error");
+    qWarning() << "⚠️ MQTT Error:" << msg;
+    emit connectionError(msg);
 }
 
 void MQTTClient::updateSubscription()
 {
-    if (!connected() || m_topic.isEmpty())
-        return;
+    if (!connected() || m_topic.isEmpty()) return;
 
     if (m_subscription) {
         m_subscription->unsubscribe();
         m_subscription = nullptr;
     }
 
-    qDebug() << "📡 Subscribing to topic:" << m_topic;
+    qDebug() << "📡 subscribing to:" << m_topic;
     m_subscription = m_client->subscribe(m_topic, 0);
 
     if (m_subscription) {
         connect(m_subscription, &QMqttSubscription::messageReceived,
                 this, &MQTTClient::onMessageReceived);
-        qDebug() << "✅ Successfully subscribed";
+        qDebug() << "✅ subscribed";
     } else {
-        qWarning() << "❌ Failed to subscribe to topic:" << m_topic;
+        qWarning() << "❌ subscribe failed for topic:" << m_topic;
     }
 }
