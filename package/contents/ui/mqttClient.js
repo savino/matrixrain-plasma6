@@ -70,17 +70,21 @@ function mqttBuildSubscribePacket(topic) {
     return packet.buffer
 }
 
-function _handleBinaryMessage(data) {
+function handleBinaryMessage(data) {
     try {
         var arr = new Uint8Array(data)
         if (arr.length < 2) return
         var header = mqttDecodeRemaining(arr)
         var packetType = arr[0] >> 4
         if (packetType === 2) {
+            // CONNACK
             if (_currentOpts.onDebug) _currentOpts.onDebug("CONNACK received")
+            if (_currentOpts.onConnect) _currentOpts.onConnect()
         } else if (packetType === 9) {
+            // SUBACK
             if (_currentOpts.onDebug) _currentOpts.onDebug("SUBACK received")
         } else if (packetType === 3) {
+            // PUBLISH
             var topicLenIdx = 1 + header.lenBytes
             var topicLen = (arr[topicLenIdx] << 8) | arr[topicLenIdx + 1]
             var topicStart = topicLenIdx + 2
@@ -100,70 +104,73 @@ function connect(opts) {
     _currentOpts = opts || {}
     var url = (_currentOpts.useSsl ? "wss://" : "ws://") + _currentOpts.host + ":" + _currentOpts.port + (_currentOpts.path || "")
     if (_currentOpts.onDebug) _currentOpts.onDebug("Connecting to: " + url)
+    
     try {
-        // If a QML WebSocket object was provided use it; otherwise try to create one (best-effort)
-        if (_ws) { try { _ws.close() } catch(e) {} _ws = null }
+        // Close existing connection if any
+        if (_ws) { 
+            try { _ws.active = false } catch(e) {} 
+            _ws = null 
+        }
+        
         var socketObj = _currentOpts.socket
         if (!socketObj) {
-            // Try to create a QML WebSocket in the provided parent
-            var parent = _currentOpts.parent || null
-            if (!parent) throw new Error("No socket or parent provided for MQTT connect")
-            var qmlStr = 'import QtWebSockets 1.0; WebSocket { id: mqttSocket; url: "' + url + '"; active: true }'
-            try {
-                socketObj = Qt.createQmlObject(qmlStr, parent, 'mqttSocket')
-            } catch(e) {
-                throw new Error('Failed to create QML WebSocket: ' + e)
-            }
-        } else {
-            // set URL and activate
-            socketObj.url = url
-            socketObj.active = true
+            if (_currentOpts.onError) _currentOpts.onError("No WebSocket object provided")
+            return
         }
 
         _ws = socketObj
+        _ws.url = url
+        _ws.active = true
 
-        // wire up handlers on the QML WebSocket object
-        _ws.onTextMessageReceived = function(message) {
-            if (_currentOpts.onMessage) _currentOpts.onMessage(_currentOpts.topic || "", message)
-        }
-        _ws.onBinaryMessageReceived = function(message) {
-            _handleBinaryMessage(message)
-        }
-        _ws.onStatusChanged = function() {
-            try {
-                var status = _ws.status
-                // WebSocket.Open is available on the QML type
-                if (status === WebSocket.Open || status === _ws.Open) {
-                    if (_currentOpts.onConnect) _currentOpts.onConnect()
-                } else {
-                    if (_currentOpts.onDisconnect) _currentOpts.onDisconnect()
-                }
-            } catch (e) {
-                if (_currentOpts.onDebug) _currentOpts.onDebug('status handler error: ' + e)
-            }
-        }
-        _ws.onError = function() { if (_currentOpts.onError) _currentOpts.onError(_ws.errorString ? _ws.errorString : 'unknown error') }
-
-        // Send CONNECT packet once socket is open; some QML WebSocket implementations
-        // may already be open by the time we set handlers, so we attempt to send immediately
-        try {
-            var clientId = (_currentOpts.clientIdPrefix || "mqttrain-") + Math.random().toString(36).substring(2, 10)
-            var connPkt = mqttBuildConnectPacket(clientId, _currentOpts.username || "", _currentOpts.password || "")
-            _ws.sendBinaryMessage(connPkt)
-            if (_currentOpts.topic) {
-                var subPkt = mqttBuildSubscribePacket(_currentOpts.topic)
-                // send after a short delay to allow CONNACK processing by broker
-                Qt.callLater(function() { try { _ws.sendBinaryMessage(subPkt) } catch(e) {} })
-            }
-        } catch(e) {
-            if (_currentOpts.onError) _currentOpts.onError(e.toString())
-        }
+        // Note: Signal handlers must be connected in QML using Connections component
+        // We cannot assign them from JavaScript as they are read-only properties
+        // The QML code must handle: onStatusChanged, onTextMessageReceived, onBinaryMessageReceived
+        
     } catch (e) {
         if (_currentOpts.onError) _currentOpts.onError(e.toString())
     }
 }
 
-function disconnect() { if (_ws) { try { _ws.close() } catch(e) {} _ws = null } }
+function sendConnectPacket() {
+    if (!_ws) return
+    try {
+        var clientId = (_currentOpts.clientIdPrefix || "mqttrain-") + Math.random().toString(36).substring(2, 10)
+        var connPkt = mqttBuildConnectPacket(clientId, _currentOpts.username || "", _currentOpts.password || "")
+        _ws.sendBinaryMessage(connPkt)
+        if (_currentOpts.onDebug) _currentOpts.onDebug("CONNECT packet sent")
+    } catch(e) {
+        if (_currentOpts.onError) _currentOpts.onError("Error sending CONNECT: " + e.toString())
+    }
+}
 
-function subscribe(topic) { if (!_ws) return; try { var sub = mqttBuildSubscribePacket(topic); _ws.send(sub) } catch(e) { if (_currentOpts.onError) _currentOpts.onError(e.toString()) } }
+function sendSubscribePacket(topic) {
+    if (!_ws) return
+    try {
+        var subPkt = mqttBuildSubscribePacket(topic || _currentOpts.topic || "")
+        _ws.sendBinaryMessage(subPkt)
+        if (_currentOpts.onDebug) _currentOpts.onDebug("SUBSCRIBE packet sent for topic: " + (topic || _currentOpts.topic))
+    } catch(e) {
+        if (_currentOpts.onError) _currentOpts.onError("Error sending SUBSCRIBE: " + e.toString())
+    }
+}
 
+function disconnect() { 
+    if (_ws) { 
+        try { 
+            _ws.active = false 
+        } catch(e) {} 
+        _ws = null 
+    } 
+}
+
+function subscribe(topic) { 
+    sendSubscribePacket(topic)
+}
+
+function getSocket() {
+    return _ws
+}
+
+function getOptions() {
+    return _currentOpts
+}
