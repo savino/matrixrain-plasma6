@@ -28,7 +28,7 @@ WallpaperItem {
     // MQTT state
     property var messageChars: []
     property int messageTick: 0
-    property bool mqttConnected: false  // True only after CONNACK
+    property bool mqttConnected: false       // True only after CONNACK
     property bool websocketConnected: false  // True when WebSocket is open
     property string lastTopic: ""
     property string lastPayload: ""
@@ -46,82 +46,64 @@ WallpaperItem {
         console.log("[MQTTRain] " + msg)
     }
 
-    // WebSocket for MQTT connection
+    // WebSocket for MQTT-over-WebSocket
+    // CRITICAL: Mosquitto requires the 'mqtt' subprotocol in the
+    // WebSocket handshake (Sec-WebSocket-Protocol: mqtt header).
+    // Without this, Mosquitto silently drops the connection.
+    // Paho Python sets this automatically; QML requires explicit declaration.
     WebSocket {
         id: mqttSocket
         active: false
         url: ""
+        subprotocols: ["mqtt"]
     }
 
-    // Connections component to handle WebSocket signals (QML best practice)
+    // Wire up WebSocket signals via Connections (QML best practice;
+    // signal handler properties are read-only and cannot be set from JS)
     Connections {
         target: mqttSocket
-        
+
         function onStatusChanged() {
             var status = mqttSocket.status
             var statusNames = ["Closed", "Connecting", "Open", "Closing", "Error"]
-            var statusName = statusNames[status] || "Unknown"
-            
-            main.writeLog("🔌 WebSocket status: " + statusName + " (" + status + ")")
-            
+            main.writeLog("🔌 WebSocket status: " + (statusNames[status] || "Unknown") + " (" + status + ")")
+
             if (status === WebSocket.Open) {
-                main.writeLog("✅ WebSocket Connected")
+                main.writeLog("✅ WebSocket open - sending MQTT CONNECT")
                 main.websocketConnected = true
                 main.mqttConnecting = false
-                
-                // Send MQTT CONNECT packet
                 MQTTClient.sendConnectPacket()
-                
+
             } else if (status === WebSocket.Closed || status === WebSocket.Error) {
-                main.writeLog("⚠️ WebSocket Closed/Error")
+                if (mqttSocket.errorString)
+                    main.writeLog("❌ WebSocket error: " + mqttSocket.errorString)
                 main.websocketConnected = false
                 main.mqttConnected = false
                 main.mqttConnecting = false
-                
-                // Auto-reconnect if MQTT is still enabled
-                if (main.mqttEnable && !reconnectTimer.running) {
+                if (main.mqttEnable && !reconnectTimer.running)
                     reconnectTimer.start()
-                }
             }
         }
-        
+
         function onTextMessageReceived(message) {
-            // Some brokers might send text messages
-            main.writeLog("📨 Text message: " + message.substring(0, 100))
-            main.lastPayload = message
-            main.messageChars = []
-            for (var i = 0; i < message.length; i++) {
-                main.messageChars.push(message.charAt(i))
-            }
-            main.messagesReceived++
-            canvas.requestPaint()
+            main.writeLog("📨 Text message received: " + message.substring(0, 100))
+            _handlePayload("", message)
         }
-        
+
         function onBinaryMessageReceived(message) {
-            // Handle MQTT binary packets
             MQTTClient.handleBinaryMessage(message)
-        }
-        
-        function onErrorStringChanged() {
-            if (mqttSocket.errorString) {
-                main.writeLog("❌ WebSocket Error: " + mqttSocket.errorString)
-            }
         }
     }
 
-    // Timer to send SUBSCRIBE after CONNECT (waiting for CONNACK)
-    Timer {
-        id: subscribeTimer
-        interval: 500
-        repeat: false
-        onTriggered: {
-            if (main.mqttConnected) {
-                main.writeLog("🔔 Subscribing to topic: " + main.mqttTopic)
-                MQTTClient.sendSubscribePacket(main.mqttTopic)
-            } else {
-                main.writeLog("⚠️ Cannot subscribe: not connected (waiting for CONNACK)")
-            }
-        }
+    // Called by MQTTClient callbacks and text handler
+    function _handlePayload(topic, payload) {
+        main.lastTopic = topic
+        main.lastPayload = payload
+        main.messagesReceived++
+        main.messageChars = []
+        for (var i = 0; i < payload.length; i++)
+            main.messageChars.push(payload.charAt(i))
+        canvas.requestPaint()
     }
 
     // MQTT connection management
@@ -129,13 +111,10 @@ WallpaperItem {
 
     function mqttConnect() {
         if (!main.mqttEnable) {
-            main.writeLog("MQTT disabled, disconnecting if connected")
-            main.mqttConnected = false
-            main.websocketConnected = false
-            MQTTClient.disconnect()
+            main.writeLog("MQTT disabled")
+            mqttDisconnect()
             return
         }
-
         if (main._mqttConnectInProgress) {
             main.writeLog("Connect already in progress, skipping")
             return
@@ -144,92 +123,81 @@ WallpaperItem {
         main._mqttConnectInProgress = true
         main.mqttConnecting = true
 
-        try {
-            var clientIdPrefix = "mqttrain-" + Date.now()
-            
-            MQTTClient.connect({
-                host: main.mqttHost,
-                port: main.mqttPort,
-                path: main.mqttPath,
-                useSsl: false,
-                socket: mqttSocket,
-                clientIdPrefix: clientIdPrefix,
-                username: main.mqttUsername,
-                password: main.mqttPassword,
-                topic: main.mqttTopic,
-                
-                onConnect: function() {
-                    main.writeLog("✅ MQTT Protocol Connected (CONNACK received)")
-                    main.mqttConnected = true
-                    main._mqttConnectInProgress = false
-                    
-                    // Now we can subscribe
-                    subscribeTimer.start()
-                },
-                
-                onDisconnect: function() {
-                    main.writeLog("⚠️ MQTT Protocol Disconnected")
-                    main.mqttConnected = false
-                    main._mqttConnectInProgress = false
-                },
-                
-                onMessage: function(topic, payload) {
-                    main.writeLog("📨 MQTT Message [" + topic + "] (" + payload.length + " bytes)")
-                    main.lastTopic = topic
-                    main.lastPayload = payload
-                    main.messagesReceived++
-                    
-                    // Convert payload to character array
-                    main.messageChars = []
-                    for (var i = 0; i < payload.length; i++) {
-                        main.messageChars.push(payload.charAt(i))
-                    }
-                    canvas.requestPaint()
-                },
-                
-                onError: function(error) {
-                    main.writeLog("❌ MQTT Error: " + error)
-                    main._mqttConnectInProgress = false
-                },
-                
-                onDebug: function(msg) {
-                    main.writeLog(msg)
-                }
-            })
-            
-            // Clear the semaphore after a short delay
-            Qt.callLater(function() { 
-                if (main._mqttConnectInProgress && !main.mqttConnected) {
-                    main._mqttConnectInProgress = false
-                }
-            })
-        } catch (e) {
-            main.writeLog("❌ Exception during connect: " + e.toString())
-            main.mqttConnecting = false
-            main._mqttConnectInProgress = false
-        }
+        MQTTClient.connect({
+            host: main.mqttHost,
+            port: main.mqttPort,
+            path: main.mqttPath,
+            useSsl: false,
+            socket: mqttSocket,
+            clientIdPrefix: "mqttrain-",
+            username: main.mqttUsername,
+            password: main.mqttPassword,
+            topic: main.mqttTopic,
+
+            onConnect: function() {
+                main.writeLog("✅ MQTT CONNACK OK — subscribing to '" + main.mqttTopic + "'")
+                main.mqttConnected = true
+                main._mqttConnectInProgress = false
+                // Wait briefly then subscribe
+                subscribeTimer.start()
+            },
+
+            onDisconnect: function() {
+                main.writeLog("⚠️ MQTT disconnected")
+                main.mqttConnected = false
+                main._mqttConnectInProgress = false
+            },
+
+            onMessage: function(topic, payload) {
+                main.writeLog("📨 MQTT [" + topic + "] " + payload.substring(0, 80))
+                _handlePayload(topic, payload)
+            },
+
+            onError: function(error) {
+                main.writeLog("❌ MQTT error: " + error)
+                main._mqttConnectInProgress = false
+            },
+
+            onDebug: function(msg) {
+                main.writeLog(msg)
+            }
+        })
+
+        // Clear semaphore after a short window
+        Qt.callLater(function() {
+            if (main._mqttConnectInProgress && !main.websocketConnected)
+                main._mqttConnectInProgress = false
+        })
     }
 
     function mqttDisconnect() {
-        try {
-            MQTTClient.disconnect()
-            main.mqttConnected = false
-            main.websocketConnected = false
-            main.mqttConnecting = false
-        } catch (e) {
-            main.writeLog("Error disconnecting: " + e.toString())
+        try { MQTTClient.disconnect() } catch(e) {}
+        main.mqttConnected = false
+        main.websocketConnected = false
+        main.mqttConnecting = false
+    }
+
+    // Subscribe AFTER receiving CONNACK
+    Timer {
+        id: subscribeTimer
+        interval: 100
+        repeat: false
+        onTriggered: {
+            if (main.mqttConnected) {
+                main.writeLog("🔔 Sending SUBSCRIBE for '" + main.mqttTopic + "'")
+                MQTTClient.sendSubscribePacket(main.mqttTopic)
+            }
         }
     }
 
-    // Auto-reconnect timer
+    // Auto-reconnect on unexpected disconnection
     Timer {
         id: reconnectTimer
         interval: 5000
         repeat: false
-        running: false
         onTriggered: {
             if (main.mqttEnable && !main.websocketConnected && !main.mqttConnecting) {
-                main.writeLog("🔄 Attempting reconnection...")
+                main.writeLog("🔄 Reconnecting...")
                 mqttConnect()
             }
         }
@@ -243,9 +211,8 @@ WallpaperItem {
         function initDrops() {
             drops = []
             var cols = Math.floor(canvas.width / main.fontSize)
-            for (var j = 0; j < cols; j++) {
+            for (var j = 0; j < cols; j++)
                 drops.push(Math.floor(Math.random() * canvas.height / main.fontSize))
-            }
         }
 
         Timer {
@@ -259,94 +226,68 @@ WallpaperItem {
         onPaint: {
             var ctx = getContext("2d"), w = width, h = height
             ctx.fillStyle = "rgba(0,0,0,0.05)"
-            ctx.fillRect(0,0,w,h)
-            
+            ctx.fillRect(0, 0, w, h)
+
             for (var i = 0; i < drops.length; i++) {
                 var x = i * main.fontSize
                 var y = drops[i] * main.fontSize
                 var color = main.colorMode === 0
                     ? main.singleColor
                     : main.palettes[main.paletteIndex][i % main.palettes[main.paletteIndex].length]
-                
-                // Glitch effect
-                if (Math.random() < main.glitchChance / 100) {
-                    ctx.fillStyle = "#ffffff"
-                } else {
-                    ctx.fillStyle = color
-                }
-                
+
+                ctx.fillStyle = (Math.random() < main.glitchChance / 100) ? "#ffffff" : color
                 ctx.font = main.fontSize + "px monospace"
 
                 var ch = null
                 if (main.mqttEnable) {
-                    // When MQTT is enabled, render incoming message characters
                     if (main.messageChars && main.messageChars.length > 0) {
                         var idx = (drops[i] + main.messageTick) % main.messageChars.length
                         ch = main.messageChars[idx]
                         ctx.fillText(ch, x, y)
                     }
-                    // Don't render random characters when MQTT is enabled but no message received yet
+                    // blank canvas while waiting for first MQTT message
                 } else {
-                    // Default Matrix-style random characters
                     if (main.messageChars && main.messageChars.length > 0) {
                         var idx = (drops[i] + main.messageTick) % main.messageChars.length
                         ch = main.messageChars[idx]
                     }
-                    if (!ch) {
+                    if (!ch)
                         ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
-                    }
                     ctx.fillText(ch, x, y)
                 }
-                
-                // Advance drop with jitter effect
+
                 drops[i] = (drops[i] + 1 + Math.random() * main.jitter / 100) % (h / main.fontSize)
             }
-            
-            // Advance message tick for animation
-            if (main.messageChars && main.messageChars.length > 0) {
+
+            if (main.messageChars && main.messageChars.length > 0)
                 main.messageTick = (main.messageTick + 1) % 1000000
-            }
 
             // Debug overlay
             if (main.debugOverlay) {
-                var boxW = 480
-                var boxH = 130
                 ctx.fillStyle = "rgba(0,0,0,0.85)"
-                ctx.fillRect(8, 8, boxW, boxH)
-                
-                // Title
-                ctx.fillStyle = "#00ff00"
+                ctx.fillRect(8, 8, 480, 130)
                 ctx.font = "bold 13px monospace"
+                ctx.fillStyle = "#00ff00"
                 ctx.fillText("⚙️ MQTT Rain Debug", 14, 26)
-                
-                // Connection status
                 ctx.font = "12px monospace"
-                var wsStatus = main.websocketConnected ? "✅ OPEN" : "❌ CLOSED"
-                var mqttStatus = main.mqttConnected ? "✅ CONNECTED" : main.mqttConnecting ? "🔄 CONNECTING" : "❌ DISCONNECTED"
-                ctx.fillStyle = main.websocketConnected ? "#00ff00" : "#ff0000"
-                ctx.fillText("WebSocket: " + wsStatus, 14, 46)
+                ctx.fillStyle = main.websocketConnected ? "#00ff00" : "#ff4444"
+                ctx.fillText("WS: " + (main.websocketConnected ? "✅ OPEN" : "❌ CLOSED"), 14, 46)
                 ctx.fillStyle = main.mqttConnected ? "#00ff00" : "#ff9900"
-                ctx.fillText("MQTT: " + mqttStatus, 14, 62)
-                
-                // Connection details
+                ctx.fillText("MQTT: " + (main.mqttConnected ? "✅ CONNECTED" : main.mqttConnecting ? "🔄 CONNECTING" : "❌ DISCONNECTED"), 14, 62)
                 ctx.fillStyle = "#00ccff"
                 ctx.fillText("Broker: " + main.mqttHost + ":" + main.mqttPort + main.mqttPath, 14, 78)
-                ctx.fillText("Topic: " + main.mqttTopic, 14, 94)
-                
-                // Message info
+                ctx.fillText("Topic:  " + main.mqttTopic, 14, 94)
                 ctx.fillStyle = "#ffff00"
-                var last = main.lastPayload ? main.lastPayload.toString() : "(waiting...)"
-                if (last.length > 50) last = last.substring(0, 47) + "..."
-                ctx.fillText("Last: " + last, 14, 110)
-                ctx.fillText("Messages: " + main.messagesReceived + " | Chars: " + main.messageChars.length, 14, 126)
+                var last = (main.lastPayload || "(waiting...)").toString()
+                ctx.fillText("Last:   " + (last.length > 52 ? last.substring(0, 49) + "..." : last), 14, 110)
+                ctx.fillText("Msgs: " + main.messagesReceived + "  |  Chars: " + main.messageChars.length, 14, 126)
             }
         }
 
         Component.onCompleted: initDrops()
     }
 
-    // Property change handlers
-    onFontSizeChanged: { canvas.initDrops(); canvas.requestPaint(); }
+    onFontSizeChanged: { canvas.initDrops(); canvas.requestPaint() }
     onSpeedChanged: timer.interval = 1000 / main.speed
     onColorModeChanged: canvas.requestPaint()
     onSingleColorChanged: canvas.requestPaint()
@@ -354,41 +295,23 @@ WallpaperItem {
     onJitterChanged: canvas.requestPaint()
     onGlitchChanceChanged: canvas.requestPaint()
     onDebugOverlayChanged: canvas.requestPaint()
-    
-    // MQTT configuration changes trigger reconnection
-    onMqttEnableChanged: {
-        if (mqttEnable) {
-            mqttConnect()
+
+    onMqttEnableChanged: mqttEnable ? mqttConnect() : mqttDisconnect()
+    onMqttHostChanged:   { if (mqttEnable) mqttConnect() }
+    onMqttPortChanged:   { if (mqttEnable) mqttConnect() }
+    onMqttPathChanged:   { if (mqttEnable) mqttConnect() }
+    onMqttTopicChanged:  { if (mqttEnable && mqttConnected) mqttConnect() }
+
+    Component.onCompleted: {
+        main.writeLog("=== Matrix Rain MQTT Wallpaper Started ===")
+        canvas.initDrops()
+        if (main.mqttEnable) {
+            main.writeLog("MQTT enabled — broker: " + main.mqttHost + ":" + main.mqttPort + main.mqttPath)
+            Qt.callLater(mqttConnect)
         } else {
-            mqttDisconnect()
-        }
-    }
-    onMqttHostChanged: { if (mqttEnable) mqttConnect() }
-    onMqttPortChanged: { if (mqttEnable) mqttConnect() }
-    onMqttPathChanged: { if (mqttEnable) mqttConnect() }
-    onMqttTopicChanged: {
-        if (mqttEnable && mqttConnected) {
-            // Resubscribe to new topic
-            mqttConnect()
+            main.writeLog("MQTT disabled — random Matrix characters")
         }
     }
 
-    Component.onCompleted: { 
-        main.writeLog("=== Matrix Rain MQTT Wallpaper Started ===")
-        main.writeLog("Version: MQTT-enabled with WebSocket support")
-        canvas.initDrops()
-        
-        if (main.mqttEnable) {
-            main.writeLog("MQTT enabled, connecting to " + main.mqttHost + ":" + main.mqttPort + main.mqttPath)
-            // Delay initial connection slightly to ensure UI is ready
-            Qt.callLater(mqttConnect)
-        } else {
-            main.writeLog("MQTT disabled - using random Matrix characters")
-        }
-    }
-    
-    Component.onDestruction: {
-        main.writeLog("=== Wallpaper shutting down ===")
-        mqttDisconnect()
-    }
+    Component.onDestruction: { mqttDisconnect() }
 }
