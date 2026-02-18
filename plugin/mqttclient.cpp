@@ -1,6 +1,8 @@
 #include "mqttclient.h"
 #include <QDebug>
 #include <QTcpSocket>
+#include <QEventLoop>
+#include <QTimer>
 
 MQTTClient::MQTTClient(QObject *parent)
     : QObject(parent)
