@@ -64,10 +64,15 @@ WallpaperItem {
             main.lastTopic   = topic
             main.lastPayload = payload
             main.messagesReceived++
+
+            // Build the display string: "topic: payload/"
+            // The trailing '/' acts as a visible separator when the string loops
+            var display = topic + ": " + payload + "/"
             var chars = []
-            for (var i = 0; i < payload.length; i++)
-                chars.push(payload.charAt(i))
+            for (var i = 0; i < display.length; i++)
+                chars.push(display.charAt(i))
             main.messageChars = chars
+
             canvas.requestPaint()
         }
 
@@ -151,18 +156,9 @@ WallpaperItem {
 
                 var ch
                 if (hasMqttChars) {
-                    // column i, integer row r  →  messageChars[(r + i) % len]
-                    //
-                    // Why this works:
-                    //   • Follow one column as it falls: r increases → you see
-                    //     consecutive chars of the message top-to-bottom.
-                    //   • Look at two adjacent columns at the same row: they
-                    //     show consecutive chars  (offset by 1) → the message
-                    //     is also readable diagonally.
                     var r = Math.floor(drops[i])
                     ch = main.messageChars[(r + i) % msgLen]
                 } else {
-                    // MQTT disabled or no message yet → random katakana
                     ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
                 }
 
