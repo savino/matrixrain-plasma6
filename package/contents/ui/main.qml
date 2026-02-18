@@ -47,15 +47,17 @@ WallpaperItem {
     }
 
     // WebSocket for MQTT-over-WebSocket
-    // CRITICAL: Mosquitto requires the 'mqtt' subprotocol in the
-    // WebSocket handshake (Sec-WebSocket-Protocol: mqtt header).
-    // Without this, Mosquitto silently drops the connection.
-    // Paho Python sets this automatically; QML requires explicit declaration.
+    // NOTE: QtWebSockets in Qt 5.15/6.x doesn't expose 'subprotocols' property.
+    // Mosquitto typically requires 'Sec-WebSocket-Protocol: mqtt' header.
+    // Workaround options:
+    // 1. Configure Mosquitto to relax subprotocol requirement (see mosquitto.conf)
+    // 2. Use a WebSocket proxy that adds the header
+    // 3. Wait for Qt 6.4+ which supports requestedSubprotocols
     WebSocket {
         id: mqttSocket
         active: false
         url: ""
-        subprotocols: ["mqtt"]
+        // subprotocols: ["mqtt"]  // Not available in Qt 5.15/6.x QtWebSockets
     }
 
     // Wire up WebSocket signals via Connections (QML best practice;
@@ -304,9 +306,12 @@ WallpaperItem {
 
     Component.onCompleted: {
         main.writeLog("=== Matrix Rain MQTT Wallpaper Started ===")
+        main.writeLog("Qt version: " + Qt.version)
         canvas.initDrops()
         if (main.mqttEnable) {
             main.writeLog("MQTT enabled — broker: " + main.mqttHost + ":" + main.mqttPort + main.mqttPath)
+            main.writeLog("⚠️ Note: Qt " + Qt.version + " WebSocket may lack subprotocol support")
+            main.writeLog("⚠️ If connection fails, configure Mosquitto to relax subprotocol requirement")
             Qt.callLater(mqttConnect)
         } else {
             main.writeLog("MQTT disabled — random Matrix characters")
