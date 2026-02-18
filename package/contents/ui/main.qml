@@ -15,7 +15,7 @@ WallpaperItem {
     property real jitter: main.configuration.jitter !== undefined ? main.configuration.jitter : 0
     property int glitchChance: main.configuration.glitchChance !== undefined ? main.configuration.glitchChance : 1
 
-    // MQTT settings — always trim to remove accidental spaces/newlines from config
+    // MQTT settings
     property bool mqttEnable: main.configuration.mqttEnable !== undefined ? main.configuration.mqttEnable : false
     property string mqttHost: (main.configuration.mqttHost !== undefined ? main.configuration.mqttHost : "homeassistant.lan").trim()
     property int mqttPort: main.configuration.mqttPort !== undefined ? main.configuration.mqttPort : 1883
@@ -24,9 +24,8 @@ WallpaperItem {
     property string mqttPassword: (main.configuration.mqttPassword !== undefined && main.configuration.mqttPassword !== null) ? main.configuration.mqttPassword : ""
     property bool mqttDebug: main.configuration.mqttDebug !== undefined ? main.configuration.mqttDebug : false
 
-    // UI state
+    // State
     property var messageChars: []
-    property int messageTick: 0
     property string lastTopic: ""
     property string lastPayload: ""
     property bool debugOverlay: main.configuration.debugOverlay !== undefined ? main.configuration.debugOverlay : false
@@ -41,8 +40,6 @@ WallpaperItem {
     function writeLog(msg) {
         console.log("[MQTTRain] " + msg)
     }
-
-    // Only logs when 'Debug MQTT logging' is enabled in settings
     function writeDebug(msg) {
         if (main.mqttDebug)
             console.log("[MQTTRain][debug] " + msg)
@@ -63,14 +60,14 @@ WallpaperItem {
         }
 
         onMessageReceived: function(topic, payload) {
-            // Full payload — no truncation
             main.writeDebug("📨 [" + topic + "] " + payload)
-            main.lastTopic = topic
+            main.lastTopic   = topic
             main.lastPayload = payload
             main.messagesReceived++
-            main.messageChars = []
+            var chars = []
             for (var i = 0; i < payload.length; i++)
-                main.messageChars.push(payload.charAt(i))
+                chars.push(payload.charAt(i))
+            main.messageChars = chars
             canvas.requestPaint()
         }
 
@@ -84,19 +81,15 @@ WallpaperItem {
             mqttClient.disconnectFromHost()
             return
         }
-
         var host  = main.mqttHost.trim()
         var topic = main.mqttTopic.trim()
         var user  = main.mqttUsername.trim()
-
         main.writeLog("Connecting to " + host + ":" + main.mqttPort + " topic=[" + topic + "]")
-
         mqttClient.host     = host
         mqttClient.port     = main.mqttPort
         mqttClient.username = user
         mqttClient.password = main.mqttPassword
         mqttClient.topic    = topic
-
         mqttClient.connectToHost()
     }
 
@@ -121,7 +114,7 @@ WallpaperItem {
             drops = []
             var cols = Math.floor(canvas.width / main.fontSize)
             for (var j = 0; j < cols; j++)
-                drops.push(Math.floor(Math.random() * canvas.height / main.fontSize))
+                drops.push(Math.random() * canvas.height / main.fontSize)
         }
 
         Timer {
@@ -133,13 +126,22 @@ WallpaperItem {
         }
 
         onPaint: {
-            var ctx = getContext("2d"), w = width, h = height
+            var ctx = getContext("2d")
+            var w = width, h = height
+
+            // Fade previous frame to create trailing effect
             ctx.fillStyle = "rgba(0,0,0,0.05)"
             ctx.fillRect(0, 0, w, h)
+
+            var hasMqttChars = main.mqttEnable
+                               && main.messageChars
+                               && main.messageChars.length > 0
+            var msgLen = hasMqttChars ? main.messageChars.length : 0
 
             for (var i = 0; i < drops.length; i++) {
                 var x = i * main.fontSize
                 var y = drops[i] * main.fontSize
+
                 var color = main.colorMode === 0
                     ? main.singleColor
                     : main.palettes[main.paletteIndex][i % main.palettes[main.paletteIndex].length]
@@ -147,29 +149,32 @@ WallpaperItem {
                 ctx.fillStyle = (Math.random() < main.glitchChance / 100) ? "#ffffff" : color
                 ctx.font = main.fontSize + "px monospace"
 
-                var ch = null
-                if (main.mqttEnable) {
-                    if (main.messageChars && main.messageChars.length > 0) {
-                        var idx = (drops[i] + main.messageTick) % main.messageChars.length
-                        ch = main.messageChars[idx]
-                        ctx.fillText(ch, x, y)
-                    }
+                var ch
+                if (hasMqttChars) {
+                    // column i, integer row r  →  messageChars[(r + i) % len]
+                    //
+                    // Why this works:
+                    //   • Follow one column as it falls: r increases → you see
+                    //     consecutive chars of the message top-to-bottom.
+                    //   • Look at two adjacent columns at the same row: they
+                    //     show consecutive chars  (offset by 1) → the message
+                    //     is also readable diagonally.
+                    var r = Math.floor(drops[i])
+                    ch = main.messageChars[(r + i) % msgLen]
                 } else {
-                    if (main.messageChars && main.messageChars.length > 0) {
-                        var idx = (drops[i] + main.messageTick) % main.messageChars.length
-                        ch = main.messageChars[idx]
-                    }
-                    if (!ch)
-                        ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
-                    ctx.fillText(ch, x, y)
+                    // MQTT disabled or no message yet → random katakana
+                    ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
                 }
 
-                drops[i] = (drops[i] + 1 + Math.random() * main.jitter / 100) % (h / main.fontSize)
+                ctx.fillText(ch, x, y)
+
+                // Advance drop; wrap back to top when off screen
+                drops[i] += 1 + Math.random() * main.jitter / 100
+                if (drops[i] * main.fontSize > h + main.fontSize)
+                    drops[i] = 0
             }
 
-            if (main.messageChars && main.messageChars.length > 0)
-                main.messageTick = (main.messageTick + 1) % 1000000
-
+            // Debug overlay
             if (main.debugOverlay) {
                 ctx.fillStyle = "rgba(0,0,0,0.85)"
                 ctx.fillRect(8, 8, 480, 130)
