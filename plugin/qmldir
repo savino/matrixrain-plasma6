@@ -1,3 +1,2 @@
 module ObsidianReq.MQTTRain
 plugin mqttrainplugin
-typeinfo plugins.qmltypes
