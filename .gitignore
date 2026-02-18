@@ -1,2 +1,51 @@
-build/*
-*.zip
+# Build directories
+plugin/build/
+plugin/Build/
+build/
+Build/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+*.cmake
+!CMakeLists.txt
+
+# Qt
+*.qmlc
+*.jsc
+*.qmltypes
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.autosave
+
+# Compiled files
+*.o
+*.so
+*.so.*
+*.a
+*.la
+*.lo
+*.dylib
+*.dll
+*.exe
+
+# IDE
+.vscode/
+.idea/
+*.user
+*.creator
+*.creator.user
+*.pro.user
+*.qmlproject.user
+
+# Temporary
+*~
+*.bak
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
