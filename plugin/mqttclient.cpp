@@ -9,6 +9,7 @@ MQTTClient::MQTTClient(QObject *parent)
     , m_client(new QMqttClient(this))
     , m_subscription(nullptr)
     , m_port(1883)
+    , m_connackTimer(new QTimer(this))
 {
     connect(m_client, &QMqttClient::connected,     this, &MQTTClient::onConnected);
     connect(m_client, &QMqttClient::disconnected,  this, &MQTTClient::onDisconnected);
@@ -16,6 +17,19 @@ MQTTClient::MQTTClient(QObject *parent)
     connect(m_client, &QMqttClient::stateChanged,  this, [](QMqttClient::ClientState s) {
         qDebug() << "📊 MQTT state:" << s;
     });
+
+    // Timeout if broker never sends CONNACK
+    m_connackTimer->setSingleShot(true);
+    m_connackTimer->setInterval(5000);
+    connect(m_connackTimer, &QTimer::timeout, this, [this]() {
+        if (m_client->state() == QMqttClient::Connecting) {
+            qWarning() << "⏰ CONNACK timeout! TCP ok but broker never replied to MQTT CONNECT.";
+            qWarning() << "   Likely cause: wrong credentials, broker ACL, or wrong MQTT version.";
+            emit connectionError("CONNACK timeout");
+            m_client->disconnectFromHost();
+        }
+    });
+
     qDebug() << "MQTTClient initialized, Qt:" << qVersion();
 }
 
@@ -108,6 +122,7 @@ void MQTTClient::connectToHost()
 
     // Fresh transport every time
     auto *sock = new QTcpSocket(m_client);
+
     connect(sock, &QTcpSocket::stateChanged, [](QAbstractSocket::SocketState s) {
         qDebug() << "🔄 TCP state:" << s;
     });
@@ -118,18 +133,21 @@ void MQTTClient::connectToHost()
             [](QAbstractSocket::SocketError e) {
         qWarning() << "🔴 TCP error:" << e;
     });
+    // Log raw bytes — will show CONNACK (0x20...) or nothing
+    connect(sock, &QTcpSocket::readyRead, [sock]() {
+        QByteArray data = sock->peek(sock->bytesAvailable());
+        qDebug() << "📥 Broker raw reply (" << data.size() << "bytes):" << data.toHex();
+    });
 
     m_client->setTransport(sock, QMqttClient::AbstractSocket);
-
-    // Always re-apply parameters after new transport
     m_client->setHostname(m_host);
     m_client->setPort(static_cast<quint16>(m_port));
     m_client->setUsername(m_username);
     m_client->setPassword(m_password);
 
-    qDebug() << "  → hostname on client:" << m_client->hostname();
-    qDebug() << "  → port on client:"     << m_client->port();
+    qDebug() << "  → hostname:" << m_client->hostname() << "port:" << m_client->port();
 
+    m_connackTimer->start();
     m_client->connectToHost();
     qDebug() << "  state after call:" << m_client->state();
     qDebug() << "======================";
@@ -137,6 +155,7 @@ void MQTTClient::connectToHost()
 
 void MQTTClient::disconnectFromHost()
 {
+    m_connackTimer->stop();
     if (m_subscription) {
         m_subscription->unsubscribe();
         m_subscription = nullptr;
@@ -146,6 +165,7 @@ void MQTTClient::disconnectFromHost()
 
 void MQTTClient::onConnected()
 {
+    m_connackTimer->stop();
     qDebug() << "🎉 MQTT connected!";
     emit connectedChanged();
     updateSubscription();
@@ -153,6 +173,7 @@ void MQTTClient::onConnected()
 
 void MQTTClient::onDisconnected()
 {
+    m_connackTimer->stop();
     qDebug() << "❌ MQTT disconnected";
     if (m_subscription) m_subscription = nullptr;
     emit connectedChanged();
@@ -200,6 +221,6 @@ void MQTTClient::updateSubscription()
                 this, &MQTTClient::onMessageReceived);
         qDebug() << "✅ subscribed";
     } else {
-        qWarning() << "❌ subscribe failed for topic:" << m_topic;
+        qWarning() << "❌ subscribe failed:" << m_topic;
     }
 }
