@@ -30,7 +30,6 @@ WallpaperItem {
     property string lastPayload: ""
     property bool debugOverlay: main.configuration.debugOverlay !== undefined ? main.configuration.debugOverlay : false
     property int messagesReceived: 0
-    property bool mqttInitialized: false
 
     property var palettes: [
         ["#00ff00","#ff00ff","#00ffff","#ff0000","#ffff00","#0000ff"],
@@ -48,10 +47,9 @@ WallpaperItem {
         onConnectedChanged: {
             if (connected) {
                 main.writeLog("✅ MQTT Connected")
-                subscribeTimer.start()
             } else {
                 main.writeLog("❌ MQTT Disconnected")
-                if (main.mqttInitialized && main.mqttEnable)
+                if (main.mqttEnable)
                     reconnectTimer.start()
             }
             canvas.requestPaint()
@@ -75,7 +73,6 @@ WallpaperItem {
 
     function mqttConnect() {
         if (!main.mqttEnable) {
-            main.writeLog("MQTT disabled")
             mqttClient.disconnectFromHost()
             return
         }
@@ -95,20 +92,6 @@ WallpaperItem {
         mqttClient.connectToHost()
     }
 
-    // Initial connection timer — 2000ms to be safe
-    Timer {
-        id: initTimer
-        interval: 2000
-        repeat: false
-        onTriggered: {
-            main.mqttInitialized = true
-            if (main.mqttEnable) {
-                main.writeLog("🚀 Starting MQTT connection...")
-                mqttConnect()
-            }
-        }
-    }
-
     Timer {
         id: reconnectTimer
         interval: 5000
@@ -118,15 +101,6 @@ WallpaperItem {
                 main.writeLog("🔄 Reconnecting...")
                 mqttConnect()
             }
-        }
-    }
-
-    Timer {
-        id: subscribeTimer
-        interval: 100
-        repeat: false
-        onTriggered: {
-            main.writeLog("Subscribed to: " + mqttClient.topic)
         }
     }
 
@@ -195,47 +169,43 @@ WallpaperItem {
                 ctx.fillStyle = "#00ff00"
                 ctx.fillText("⚙️ MQTT Rain Debug", 14, 26)
                 ctx.font = "12px monospace"
-                ctx.fillStyle = main.mqttInitialized ? "#00ff00" : "#ffaa00"
-                ctx.fillText("Init: " + (main.mqttInitialized ? "✅ Ready" : "⏳ Waiting..."), 14, 46)
                 ctx.fillStyle = mqttClient.connected ? "#00ff00" : "#ff4444"
-                ctx.fillText("MQTT: " + (mqttClient.connected ? "✅ CONNECTED" : "❌ DISCONNECTED"), 14, 62)
+                ctx.fillText("MQTT: " + (mqttClient.connected ? "✅ CONNECTED" : "❌ DISCONNECTED"), 14, 46)
                 ctx.fillStyle = "#00ccff"
-                ctx.fillText("Broker: " + main.mqttHost + ":" + main.mqttPort, 14, 78)
-                ctx.fillText("Topic:  [" + main.mqttTopic + "]", 14, 94)
+                ctx.fillText("Broker: " + main.mqttHost + ":" + main.mqttPort, 14, 62)
+                ctx.fillText("Topic:  [" + main.mqttTopic + "]", 14, 78)
                 ctx.fillStyle = "#ffff00"
                 var last = (main.lastPayload || "(waiting...)").toString()
-                ctx.fillText("Last:   " + (last.length > 52 ? last.substring(0, 49) + "..." : last), 14, 110)
-                ctx.fillText("Msgs: " + main.messagesReceived + "  |  Chars: " + main.messageChars.length, 14, 126)
+                ctx.fillText("Last:   " + (last.length > 52 ? last.substring(0, 49) + "..." : last), 14, 94)
+                ctx.fillText("Msgs: " + main.messagesReceived + "  |  Chars: " + main.messageChars.length, 14, 110)
             }
         }
 
         Component.onCompleted: initDrops()
     }
 
-    onFontSizeChanged: { canvas.initDrops(); canvas.requestPaint() }
-    onSpeedChanged: timer.interval = 1000 / main.speed
-    onColorModeChanged: canvas.requestPaint()
+    onFontSizeChanged:    { canvas.initDrops(); canvas.requestPaint() }
+    onSpeedChanged:       { timer.interval = 1000 / main.speed }
+    onColorModeChanged:   canvas.requestPaint()
     onSingleColorChanged: canvas.requestPaint()
     onPaletteIndexChanged: canvas.requestPaint()
-    onJitterChanged: canvas.requestPaint()
+    onJitterChanged:      canvas.requestPaint()
     onGlitchChanceChanged: canvas.requestPaint()
     onDebugOverlayChanged: canvas.requestPaint()
 
-    onMqttEnableChanged: { if (main.mqttInitialized) { mqttEnable ? mqttConnect() : mqttClient.disconnectFromHost() } }
-    onMqttHostChanged:   { if (main.mqttInitialized && mqttEnable) mqttConnect() }
-    onMqttPortChanged:   { if (main.mqttInitialized && mqttEnable) mqttConnect() }
-    onMqttTopicChanged:  { if (main.mqttInitialized && mqttEnable && mqttClient.connected) { mqttClient.disconnectFromHost(); mqttConnect() } }
+    onMqttEnableChanged: { mqttEnable ? mqttConnect() : mqttClient.disconnectFromHost() }
+    onMqttHostChanged:   { if (mqttEnable) mqttConnect() }
+    onMqttPortChanged:   { if (mqttEnable) mqttConnect() }
+    onMqttTopicChanged:  { if (mqttEnable && mqttClient.connected) { mqttClient.disconnectFromHost(); mqttConnect() } }
 
     Component.onCompleted: {
         main.writeLog("=== Matrix Rain MQTT Wallpaper ===")
         main.writeLog("MQTT host=[" + main.mqttHost + "] port=" + main.mqttPort + " topic=[" + main.mqttTopic + "]")
         canvas.initDrops()
         if (main.mqttEnable) {
-            main.writeLog("⏳ Waiting 2000ms before connecting...")
-            initTimer.start()
+            Qt.callLater(mqttConnect)
         } else {
             main.writeLog("MQTT disabled — random Matrix characters")
-            main.mqttInitialized = true
         }
     }
 
