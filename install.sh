@@ -36,7 +36,6 @@ append_env_to_rc() {
     shell_name="$(basename "${SHELL:-/bin/bash}")"
 
     if [[ "${shell_name}" == "fish" ]]; then
-        # fish uses set -gx instead of export
         echo "" >> "${rc_file}"
         echo "# Added by matrixrain-plasma6 install.sh" >> "${rc_file}"
         echo "set -gx QML2_IMPORT_PATH ${QML_BASE_DIR} \$QML2_IMPORT_PATH" >> "${rc_file}"
@@ -121,56 +120,71 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "[5/6] Checking QML2_IMPORT_PATH..."
 
-NEEDS_ENV=false
+RC_FILE="$(detect_shell_rc)"
 
-# Check if the variable is set AND already contains our path
-if [[ -z "${QML2_IMPORT_PATH:-}" ]]; then
-    echo "⚠️  QML2_IMPORT_PATH is not set."
-    NEEDS_ENV=true
-elif [[ ":${QML2_IMPORT_PATH}:" != *":${QML_BASE_DIR}:"* ]]; then
-    echo "⚠️  QML2_IMPORT_PATH is set but does not contain ${QML_BASE_DIR}."
-    echo "   Current value: ${QML2_IMPORT_PATH}"
-    NEEDS_ENV=true
-else
-    echo "✅ QML2_IMPORT_PATH already contains ${QML_BASE_DIR}"
+# Check 1: is QML_BASE_DIR already written in the rc file?
+RC_HAS_PATH=false
+if [[ -f "${RC_FILE}" ]] && grep -qF "${QML_BASE_DIR}" "${RC_FILE}" 2>/dev/null; then
+    RC_HAS_PATH=true
 fi
 
-if [[ "${NEEDS_ENV}" == true ]]; then
-    RC_FILE="$(detect_shell_rc)"
+# Check 2: is it active in the current session?
+SESSION_HAS_PATH=false
+if [[ ":${QML2_IMPORT_PATH:-}:" == *":${QML_BASE_DIR}:"* ]]; then
+    SESSION_HAS_PATH=true
+fi
+
+if [[ "${RC_HAS_PATH}" == true && "${SESSION_HAS_PATH}" == true ]]; then
+    # All good — nothing to do
+    echo "✅ QML2_IMPORT_PATH already configured (${RC_FILE} + current session)"
+
+elif [[ "${RC_HAS_PATH}" == true && "${SESSION_HAS_PATH}" == false ]]; then
+    # Written in rc but not active yet (fresh install, not relogged yet)
+    echo "✅ QML2_IMPORT_PATH already present in ${RC_FILE}"
+    echo "ℹ️  Setting it for the current session as well..."
+    export QML2_IMPORT_PATH="${QML_BASE_DIR}:${QML2_IMPORT_PATH:-}"
+    echo "✅ Set for current session: ${QML2_IMPORT_PATH}"
+    echo ""
+    echo "⚠️  Remember: a KDE session logout/relogin is needed for plasmashell"
+    echo "   to pick it up automatically on next boot."
+
+else
+    # Not in rc file — ask the user
+    if [[ "${SESSION_HAS_PATH}" == false ]]; then
+        echo "⚠️  QML2_IMPORT_PATH does not contain ${QML_BASE_DIR}"
+    else
+        echo "⚠️  QML2_IMPORT_PATH is set in the current session but not in ${RC_FILE}"
+        echo "   (it would be lost on next login)"
+    fi
     echo ""
     echo "ℹ️  The C++ QML plugin is installed in:"
     echo "     ${QML_BASE_DIR}"
+    echo "   KDE Plasma (plasmashell) needs this path set before it starts."
     echo ""
-    echo "   KDE Plasma (plasmashell) must be started with:"
-    echo "     export QML2_IMPORT_PATH=\"${QML_BASE_DIR}:\${QML2_IMPORT_PATH}\""
-    echo "   for the wallpaper plugin to be found."
-    echo ""
-    echo "   This line can be added to your shell config: ${RC_FILE}"
+    echo "   The following line would be added to ${RC_FILE}:"
+    echo "     export QML2_IMPORT_PATH=\"${QML_BASE_DIR}:\${QML2_IMPORT_PATH:-}\""
     echo ""
     read -r -p "   Add it automatically to ${RC_FILE}? [y/N] " REPLY
     echo ""
 
     if [[ "${REPLY}" =~ ^[Yy]$ ]]; then
         append_env_to_rc "${RC_FILE}"
-        echo "✅ Added QML2_IMPORT_PATH export to ${RC_FILE}"
+        echo "✅ Added QML2_IMPORT_PATH to ${RC_FILE}"
         echo ""
-        echo "⚠️  IMPORTANT: The new environment variable will only take effect"
-        echo "   after you log out and back in to your KDE session (or reboot)."
-        echo "   A simple 'source ${RC_FILE}' is NOT enough because plasmashell"
-        echo "   is started by the KDE session manager before your shell rc is read."
+        echo "⚠️  IMPORTANT: A KDE session logout/relogin (or reboot) is required"
+        echo "   for plasmashell to start with the new variable."
+        echo "   Running 'source ${RC_FILE}' in a terminal is NOT enough."
     else
-        echo "ℹ️  Skipped. You can add it manually:"
+        echo "ℹ️  Skipped. Add it manually:"
         echo "     echo 'export QML2_IMPORT_PATH=\"${QML_BASE_DIR}:\${QML2_IMPORT_PATH:-}\"' >> ${RC_FILE}"
     fi
 
-    # Always export for the current shell session so install can be tested immediately
+    # Always export for the current session regardless of user choice
     export QML2_IMPORT_PATH="${QML_BASE_DIR}:${QML2_IMPORT_PATH:-}"
     echo ""
-    echo "ℹ️  QML2_IMPORT_PATH has been set for the CURRENT shell session:"
+    echo "ℹ️  QML2_IMPORT_PATH set for the current shell session:"
     echo "     ${QML2_IMPORT_PATH}"
-    echo "   You can test the wallpaper now by running:"
-    echo "     plasmashell --replace &"
-    echo "   In a new terminal or after relogin it will work automatically."
+    echo "   You can test immediately with: plasmashell --replace &"
 fi
 
 echo ""
