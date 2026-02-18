@@ -8,17 +8,12 @@ MQTTClient::MQTTClient(QObject *parent)
     , m_subscription(nullptr)
     , m_port(1883)
 {
-    // CRITICAL: Qt6 requires explicit transport initialization
-    // Without this, connectToHost() will fail with "Transport invalid"
-    auto *transport = new QTcpSocket(this);
-    m_client->setTransport(transport, QMqttClient::IODevice);
-    
     // Connect signals
     connect(m_client, &QMqttClient::connected, this, &MQTTClient::onConnected);
     connect(m_client, &QMqttClient::disconnected, this, &MQTTClient::onDisconnected);
     connect(m_client, &QMqttClient::errorChanged, this, &MQTTClient::onErrorChanged);
     
-    qDebug() << "MQTTClient initialized with TCP transport";
+    qDebug() << "MQTTClient initialized";
 }
 
 MQTTClient::~MQTTClient()
@@ -86,6 +81,14 @@ void MQTTClient::connectToHost()
     }
 
     qDebug() << "Connecting to MQTT broker:" << m_host << ":" << m_port;
+    
+    // CRITICAL: Create fresh transport for each connection
+    // In Qt6, the transport gets invalidated after disconnect
+    // or when connection fails. Must recreate before each connect.
+    auto *transport = new QTcpSocket(m_client);
+    m_client->setTransport(transport, QMqttClient::IODevice);
+    
+    qDebug() << "Transport created, connecting...";
     m_client->connectToHost();
 }
 
