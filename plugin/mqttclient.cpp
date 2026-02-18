@@ -33,7 +33,6 @@ void MQTTClient::setHost(const QString &host)
     if (m_host != host) {
         qDebug() << "Setting host:" << host;
         m_host = host;
-        m_client->setHostname(host);
         emit hostChanged();
     }
 }
@@ -43,7 +42,6 @@ void MQTTClient::setPort(int port)
     if (m_port != port) {
         qDebug() << "Setting port:" << port;
         m_port = port;
-        m_client->setPort(static_cast<quint16>(port));
         emit portChanged();
     }
 }
@@ -53,7 +51,6 @@ void MQTTClient::setUsername(const QString &username)
     if (m_username != username) {
         qDebug() << "Setting username:" << username;
         m_username = username;
-        m_client->setUsername(username);
         emit usernameChanged();
     }
 }
@@ -63,7 +60,6 @@ void MQTTClient::setPassword(const QString &password)
     if (m_password != password) {
         qDebug() << "Setting password: [" << (password.isEmpty() ? "empty" : "set") << "]";
         m_password = password;
-        m_client->setPassword(password);
         emit passwordChanged();
     }
 }
@@ -115,21 +111,37 @@ void MQTTClient::connectToHost()
     qDebug() << "Creating new QTcpSocket transport...";
     auto *transport = new QTcpSocket(m_client);
     
-    // Debug socket
     qDebug() << "Socket created, state:" << transport->state();
-    qDebug() << "Socket parent:" << transport->parent();
     
-    // Set transport - Qt6.10+ doesn't need the IODevice parameter
-    qDebug() << "Setting transport on QMqttClient (without IODevice parameter)...";
+    // Set transport first
+    qDebug() << "Setting transport on QMqttClient...";
     m_client->setTransport(transport, QMqttClient::AbstractSocket);
     
-    qDebug() << "Client state after setTransport:" << m_client->state();
-    qDebug() << "Transport pointer:" << m_client->transport();
-    qDebug() << "Calling connectToHost()...";
+    qDebug() << "Transport set, pointer:" << m_client->transport();
     
+    // CRITICAL: Set connection parameters AFTER transport but BEFORE connectToHost
+    qDebug() << "Setting connection parameters on client...";
+    m_client->setHostname(m_host);
+    m_client->setPort(static_cast<quint16>(m_port));
+    
+    if (!m_username.isEmpty()) {
+        m_client->setUsername(m_username);
+    }
+    
+    if (!m_password.isEmpty()) {
+        m_client->setPassword(m_password);
+    }
+    
+    qDebug() << "Client configured:";
+    qDebug() << "  Hostname:" << m_client->hostname();
+    qDebug() << "  Port:" << m_client->port();
+    qDebug() << "  Username:" << m_client->username();
+    qDebug() << "  State:" << m_client->state();
+    
+    qDebug() << "Calling connectToHost()...";
     m_client->connectToHost();
     
-    qDebug() << "connectToHost() returned, client state:" << m_client->state();
+    qDebug() << "connectToHost() called, state:" << m_client->state();
     qDebug() << "========================================";
 }
 
@@ -192,10 +204,7 @@ void MQTTClient::onErrorChanged(QMqttClient::ClientError error)
             break;
         case QMqttClient::TransportInvalid:
             errorString = "Transport invalid";
-            qWarning() << "🔴 TRANSPORT INVALID ERROR - This means QMqttClient's transport is null or invalid";
-            qWarning() << "   Client state:" << m_client->state();
-            qWarning() << "   Protocol version:" << m_client->protocolVersion();
-            qWarning() << "   Transport pointer:" << m_client->transport();
+            qWarning() << "🔴 TRANSPORT INVALID ERROR";
             break;
         case QMqttClient::ProtocolViolation:
             errorString = "Protocol violation";
