@@ -1,222 +1,177 @@
 #include "mqttclient.h"
 #include <QDebug>
-#include <QMetaObject>
 
 MQTTClient::MQTTClient(QObject *parent)
     : QObject(parent)
-    , m_mosq(nullptr)
-    , m_connected(false)
-    , m_loopTimer(nullptr)
+    , m_client(new QMqttClient(this))
+    , m_subscription(nullptr)
+    , m_port(1883)
 {
-    // Initialize libmosquitto library
-    mosquitto_lib_init();
-
-    // Create mosquitto instance
-    m_mosq = mosquitto_new(nullptr, true, this);
-    if (!m_mosq) {
-        setError("Failed to create mosquitto instance");
-        return;
-    }
-
-    // Set callbacks
-    mosquitto_connect_callback_set(m_mosq, on_connect_callback);
-    mosquitto_disconnect_callback_set(m_mosq, on_disconnect_callback);
-    mosquitto_message_callback_set(m_mosq, on_message_callback);
-    mosquitto_subscribe_callback_set(m_mosq, on_subscribe_callback);
-    mosquitto_log_callback_set(m_mosq, on_log_callback);
-
-    // Create timer for mosquitto_loop
-    m_loopTimer = new QTimer(this);
-    m_loopTimer->setInterval(10); // 10ms for responsive event handling
-    connect(m_loopTimer, &QTimer::timeout, this, [this]() {
-        if (m_mosq) {
-            int rc = mosquitto_loop(m_mosq, 0, 1); // Non-blocking
-            if (rc != MOSQ_ERR_SUCCESS && rc != MOSQ_ERR_NO_CONN) {
-                setError(QString("Loop error: %1").arg(mosquitto_strerror(rc)));
-            }
-        }
-    });
+    // Connect signals
+    connect(m_client, &QMqttClient::connected, this, &MQTTClient::onConnected);
+    connect(m_client, &QMqttClient::disconnected, this, &MQTTClient::onDisconnected);
+    connect(m_client, &QMqttClient::errorChanged, this, &MQTTClient::onErrorChanged);
 }
 
 MQTTClient::~MQTTClient()
 {
-    disconnect();
-    if (m_mosq) {
-        mosquitto_destroy(m_mosq);
-    }
-    mosquitto_lib_cleanup();
-}
-
-void MQTTClient::connectToHost(const QString &host, int port,
-                               const QString &username, const QString &password,
-                               int keepalive)
-{
-    if (!m_mosq) {
-        setError("Mosquitto instance not initialized");
-        return;
-    }
-
-    // Set authentication if provided
-    if (!username.isEmpty()) {
-        mosquitto_username_pw_set(m_mosq,
-                                  username.toUtf8().constData(),
-                                  password.isEmpty() ? nullptr : password.toUtf8().constData());
-    }
-
-    // Connect to broker
-    int rc = mosquitto_connect(m_mosq,
-                               host.toUtf8().constData(),
-                               port,
-                               keepalive);
-
-    if (rc != MOSQ_ERR_SUCCESS) {
-        setError(QString("Connect failed: %1").arg(mosquitto_strerror(rc)));
-        return;
-    }
-
-    // Start event loop
-    m_loopTimer->start();
-
-    emit debugMessage(QString("Connecting to %1:%2...").arg(host).arg(port));
-}
-
-void MQTTClient::disconnect()
-{
-    if (m_loopTimer) {
-        m_loopTimer->stop();
-    }
-
-    if (m_mosq && m_connected) {
-        mosquitto_disconnect(m_mosq);
-        setConnected(false);
+    if (m_client->state() == QMqttClient::Connected) {
+        m_client->disconnectFromHost();
     }
 }
 
-void MQTTClient::subscribe(const QString &topic, int qos)
+void MQTTClient::setHost(const QString &host)
 {
-    if (!m_mosq || !m_connected) {
-        setError("Not connected to broker");
+    if (m_host != host) {
+        m_host = host;
+        m_client->setHostname(host);
+        emit hostChanged();
+    }
+}
+
+void MQTTClient::setPort(int port)
+{
+    if (m_port != port) {
+        m_port = port;
+        m_client->setPort(static_cast<quint16>(port));
+        emit portChanged();
+    }
+}
+
+void MQTTClient::setUsername(const QString &username)
+{
+    if (m_username != username) {
+        m_username = username;
+        m_client->setUsername(username);
+        emit usernameChanged();
+    }
+}
+
+void MQTTClient::setPassword(const QString &password)
+{
+    if (m_password != password) {
+        m_password = password;
+        m_client->setPassword(password);
+        emit passwordChanged();
+    }
+}
+
+void MQTTClient::setTopic(const QString &topic)
+{
+    if (m_topic != topic) {
+        m_topic = topic;
+        emit topicChanged();
+        updateSubscription();
+    }
+}
+
+bool MQTTClient::connected() const
+{
+    return m_client->state() == QMqttClient::Connected;
+}
+
+void MQTTClient::connectToHost()
+{
+    if (m_host.isEmpty()) {
+        emit connectionError("Host is empty");
         return;
     }
 
-    int rc = mosquitto_subscribe(m_mosq, nullptr, topic.toUtf8().constData(), qos);
-    if (rc != MOSQ_ERR_SUCCESS) {
-        setError(QString("Subscribe failed: %1").arg(mosquitto_strerror(rc)));
+    qDebug() << "Connecting to MQTT broker:" << m_host << ":" << m_port;
+    m_client->connectToHost();
+}
+
+void MQTTClient::disconnectFromHost()
+{
+    if (m_subscription) {
+        m_subscription->unsubscribe();
+        m_subscription = nullptr;
+    }
+    m_client->disconnectFromHost();
+}
+
+void MQTTClient::onConnected()
+{
+    qDebug() << "Connected to MQTT broker";
+    emit connectedChanged();
+    updateSubscription();
+}
+
+void MQTTClient::onDisconnected()
+{
+    qDebug() << "Disconnected from MQTT broker";
+    if (m_subscription) {
+        m_subscription = nullptr;
+    }
+    emit connectedChanged();
+}
+
+void MQTTClient::onMessageReceived(const QMqttMessage &message)
+{
+    QString topic = message.topic().name();
+    QString payload = QString::fromUtf8(message.payload());
+    
+    qDebug() << "MQTT message received - Topic:" << topic << "Payload:" << payload;
+    emit messageReceived(topic, payload);
+}
+
+void MQTTClient::onErrorChanged(QMqttClient::ClientError error)
+{
+    if (error == QMqttClient::NoError)
+        return;
+
+    QString errorString;
+    switch (error) {
+        case QMqttClient::InvalidProtocolVersion:
+            errorString = "Invalid protocol version";
+            break;
+        case QMqttClient::IdRejected:
+            errorString = "Client ID rejected";
+            break;
+        case QMqttClient::ServerUnavailable:
+            errorString = "Server unavailable";
+            break;
+        case QMqttClient::BadUsernameOrPassword:
+            errorString = "Bad username or password";
+            break;
+        case QMqttClient::NotAuthorized:
+            errorString = "Not authorized";
+            break;
+        case QMqttClient::TransportInvalid:
+            errorString = "Transport invalid";
+            break;
+        case QMqttClient::ProtocolViolation:
+            errorString = "Protocol violation";
+            break;
+        case QMqttClient::UnknownError:
+        default:
+            errorString = "Unknown error";
+            break;
+    }
+
+    qWarning() << "MQTT Error:" << errorString;
+    emit connectionError(errorString);
+}
+
+void MQTTClient::updateSubscription()
+{
+    if (!connected() || m_topic.isEmpty())
+        return;
+
+    // Unsubscribe from previous topic
+    if (m_subscription) {
+        m_subscription->unsubscribe();
+        m_subscription = nullptr;
+    }
+
+    // Subscribe to new topic
+    qDebug() << "Subscribing to topic:" << m_topic;
+    m_subscription = m_client->subscribe(m_topic, 0); // QoS 0
+
+    if (m_subscription) {
+        connect(m_subscription, &QMqttSubscription::messageReceived,
+                this, &MQTTClient::onMessageReceived);
     } else {
-        emit debugMessage(QString("Subscribing to: %1").arg(topic));
-    }
-}
-
-void MQTTClient::publish(const QString &topic, const QString &payload, int qos, bool retain)
-{
-    if (!m_mosq || !m_connected) {
-        setError("Not connected to broker");
-        return;
-    }
-
-    QByteArray data = payload.toUtf8();
-    int rc = mosquitto_publish(m_mosq, nullptr,
-                               topic.toUtf8().constData(),
-                               data.size(),
-                               data.constData(),
-                               qos,
-                               retain);
-
-    if (rc != MOSQ_ERR_SUCCESS) {
-        setError(QString("Publish failed: %1").arg(mosquitto_strerror(rc)));
-    }
-}
-
-// Callbacks
-void MQTTClient::on_connect_callback(struct mosquitto *mosq, void *obj, int rc)
-{
-    Q_UNUSED(mosq)
-    MQTTClient *client = static_cast<MQTTClient*>(obj);
-
-    if (rc == 0) {
-        QMetaObject::invokeMethod(client, [client]() {
-            client->setConnected(true);
-            client->setError("");
-            emit client->debugMessage("✅ Connected to MQTT broker");
-        }, Qt::QueuedConnection);
-    } else {
-        QMetaObject::invokeMethod(client, [client, rc]() {
-            client->setError(QString("Connection failed: %1").arg(mosquitto_connack_string(rc)));
-        }, Qt::QueuedConnection);
-    }
-}
-
-void MQTTClient::on_disconnect_callback(struct mosquitto *mosq, void *obj, int rc)
-{
-    Q_UNUSED(mosq)
-    MQTTClient *client = static_cast<MQTTClient*>(obj);
-
-    QMetaObject::invokeMethod(client, [client, rc]() {
-        client->setConnected(false);
-        if (rc != 0) {
-            client->setError(QString("Unexpected disconnect: %1").arg(rc));
-        }
-        emit client->disconnected();
-        emit client->debugMessage(QString("❌ Disconnected (rc=%1)").arg(rc));
-    }, Qt::QueuedConnection);
-}
-
-void MQTTClient::on_message_callback(struct mosquitto *mosq, void *obj,
-                                     const struct mosquitto_message *message)
-{
-    Q_UNUSED(mosq)
-    MQTTClient *client = static_cast<MQTTClient*>(obj);
-
-    QString topic = QString::fromUtf8(message->topic);
-    QString payload = QString::fromUtf8(static_cast<const char*>(message->payload), message->payloadlen);
-
-    QMetaObject::invokeMethod(client, [client, topic, payload]() {
-        emit client->messageReceived(topic, payload);
-        emit client->debugMessage(QString("📨 [%1] %2").arg(topic, payload.left(80)));
-    }, Qt::QueuedConnection);
-}
-
-void MQTTClient::on_subscribe_callback(struct mosquitto *mosq, void *obj,
-                                       int mid, int qos_count, const int *granted_qos)
-{
-    Q_UNUSED(mosq)
-    Q_UNUSED(mid)
-    Q_UNUSED(qos_count)
-    Q_UNUSED(granted_qos)
-    MQTTClient *client = static_cast<MQTTClient*>(obj);
-
-    QMetaObject::invokeMethod(client, [client]() {
-        emit client->debugMessage("✅ Subscribed successfully");
-    }, Qt::QueuedConnection);
-}
-
-void MQTTClient::on_log_callback(struct mosquitto *mosq, void *obj, int level, const char *str)
-{
-    Q_UNUSED(mosq)
-    Q_UNUSED(level)
-    MQTTClient *client = static_cast<MQTTClient*>(obj);
-
-    QMetaObject::invokeMethod(client, [client, str]() {
-        emit client->debugMessage(QString("[libmosquitto] %1").arg(str));
-    }, Qt::QueuedConnection);
-}
-
-// Internal helpers
-void MQTTClient::setError(const QString &error)
-{
-    if (m_lastError != error) {
-        m_lastError = error;
-        emit errorChanged();
-        if (!error.isEmpty()) {
-            emit errorOccurred(error);
-        }
-    }
-}
-
-void MQTTClient::setConnected(bool connected)
-{
-    if (m_connected != connected) {
-        m_connected = connected;
-        emit connectedChanged();
+        qWarning() << "Failed to subscribe to topic:" << m_topic;
     }
 }
