@@ -14,13 +14,14 @@ An MQTT-enabled "code rainfall" background wallpaper for Plasma 6 that displays 
 - **Glitch chance** - Random bright white characters for that authentic Matrix feel
 
 ### MQTT Integration
-- **Native MQTT protocol** - Direct TCP connection using libmosquitto (no WebSocket overhead)
+- **Native MQTT protocol** - Direct TCP connection using Qt6 Mqtt module
 - **Live message display** - Incoming MQTT messages appear as falling characters
 - **Flexible configuration** - Set custom host, port, topic, and credentials
 - **Auto-reconnection** - Automatically reconnects on connection loss
 - **Debug overlay** - Optional on-screen debugging information
 - **High performance** - C++ plugin with Qt6 integration
 - **Full MQTT spec compliance** - QoS levels, authentication, wildcard topics
+- **Standard Qt library** - No external dependencies beyond Qt itself
 
 ## Installation
 
@@ -30,17 +31,17 @@ Install the following packages for your distribution:
 
 **Arch Linux / Manjaro:**
 ```bash
-sudo pacman -S cmake qt6-base qt6-declarative mosquitto kpackage
+sudo pacman -S cmake qt6-base qt6-declarative qt6-mqtt kpackage
 ```
 
 **Debian / Ubuntu:**
 ```bash
-sudo apt install cmake qt6-base-dev qt6-declarative-dev libmosquitto-dev kf6-kpackage
+sudo apt install cmake qt6-base-dev qt6-declarative-dev libqt6mqtt6-dev kf6-kpackage
 ```
 
 **Fedora:**
 ```bash
-sudo dnf install cmake qt6-qtbase-devel qt6-qtdeclarative-devel mosquitto-devel kf6-kpackage
+sudo dnf install cmake qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmqtt-devel kf6-kpackage
 ```
 
 ### Build and Install
@@ -76,7 +77,7 @@ Then open **System Settings → Appearance → Wallpaper** and select **"Matrix 
 
 1. **Enable MQTT** - Toggle MQTT integration on/off
 2. **MQTT Host** - Hostname or IP of your MQTT broker (e.g., `homeassistant.lan`, `192.168.1.100`)
-3. **MQTT Port** - MQTT TCP port (default: `1883`, NOT the WebSocket port)
+3. **MQTT Port** - MQTT TCP port (default: `1883`)
 4. **MQTT Topic** - Topic to subscribe to (supports wildcards like `zigbee2mqtt/#`)
 5. **Username/Password** - Optional authentication credentials
 6. **Debug Overlay** - Show connection status and last message on screen
@@ -122,10 +123,10 @@ The wallpaper consists of two components:
 
 1. **C++ MQTT Plugin** (`plugin/`)
    - Native Qt6 QML plugin
-   - Uses libmosquitto for MQTT protocol implementation
+   - Uses **Qt6 Mqtt module** for MQTT protocol implementation
    - Exposes `MQTTClient` type to QML
    - Thread-safe signal/slot communication
-   - Automatic event loop integration via QTimer
+   - Seamless Qt event loop integration
 
 2. **QML Wallpaper** (`package/`)
    - Canvas-based Matrix rain rendering
@@ -136,8 +137,7 @@ The wallpaper consists of two components:
 ### Requirements
 
 - **KDE Plasma 6**
-- **Qt 6.x** (Core, Qml modules)
-- **libmosquitto** (MQTT client library)
+- **Qt 6.x** (Core, Qml, Mqtt modules)
 - **CMake 3.16+** (for building)
 - **MQTT broker** (e.g., Mosquitto, HiveMQ, EMQX)
 
@@ -187,9 +187,9 @@ module "ObsidianReq.MQTTRain" is not installed
 - Check broker logs for connection attempts
 
 **Build errors:**
-- Ensure all dependencies are installed
+- Ensure all dependencies are installed (especially `qt6-mqtt`)
 - Check Qt6 version: `qmake6 --version` (requires 6.0+)
-- Verify libmosquitto: `ldconfig -p | grep mosquitto`
+- Verify Qt6 Mqtt module: `find /usr/lib* -name "libQt6Mqtt.so*"`
 - Check CMake output for missing packages
 
 **No characters appearing:**
@@ -198,9 +198,12 @@ module "ObsidianReq.MQTTRain" is not installed
 - Test topic with: `mosquitto_sub -h <host> -p 1883 -t <topic> -v`
 - Verify MQTT credentials match broker configuration
 
-**Port confusion:**
-- Use port **1883** (native MQTT), NOT 1884/9001 (WebSocket ports)
-- The C++ implementation uses direct TCP, not WebSocket
+**Qt6 Mqtt module not found:**
+```
+Project ERROR: Unknown module(s) in QT: mqtt
+```
+- Install qt6-mqtt package for your distribution (see Dependencies section)
+- On some distributions, you may need to compile QtMqtt from source
 
 ## Development
 
@@ -210,8 +213,9 @@ module "ObsidianReq.MQTTRain" is not installed
 matrixrain-plasma6/
 ├── plugin/              # C++ MQTT plugin
 │   ├── CMakeLists.txt   # Build configuration
+│   ├── plugin.cpp       # QML plugin registration
 │   ├── mqttclient.h     # MQTTClient class header
-│   ├── mqttclient.cpp   # Implementation
+│   ├── mqttclient.cpp   # Implementation (uses Qt6::Mqtt)
 │   ├── qmldir           # QML module definition
 │   └── build/           # Build output (created by cmake)
 ├── package/             # Plasma wallpaper package
@@ -221,6 +225,7 @@ matrixrain-plasma6/
 │           ├── main.qml           # Main wallpaper logic
 │           └── config.qml         # Settings UI
 ├── install.sh           # Installation script
+├── .gitignore           # Git ignore patterns
 └── README.md
 ```
 
@@ -233,6 +238,16 @@ matrixrain-plasma6/
 **To modify visual effects:**
 - Edit `package/contents/ui/main.qml`
 - Reload wallpaper: Right-click desktop → Configure Desktop and Wallpaper
+
+### Why Qt6 Mqtt?
+
+Qt6 Mqtt module provides:
+- Official Qt Project support and maintenance
+- Native C++ Qt API with Qt signals/slots
+- Standard package availability across distributions
+- No external C library dependencies
+- Full MQTT 3.1, 3.1.1, and 5.0 support
+- Better integration with Qt event loop
 
 ## Reporting Bugs
 
@@ -259,6 +274,6 @@ Native MQTT integration (C++ plugin) by [savino](https://github.com/savino)
 
 ## Acknowledgments
 
-- [libmosquitto](https://mosquitto.org/) - Eclipse Mosquitto MQTT client library
+- [Qt MQTT](https://doc.qt.io/qt-6/qtmqtt-index.html) - Qt MQTT module
 - [Qt Project](https://www.qt.io/) - Qt framework
 - [KDE Plasma](https://kde.org/plasma-desktop/) - Desktop environment
