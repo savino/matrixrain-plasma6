@@ -17,22 +17,24 @@ echo "[1/5] Checking dependencies..."
 
 if ! command -v cmake >/dev/null 2>&1; then
     echo "❌ Error: cmake not found. Install with:"
-    echo "   Arch: sudo pacman -S cmake"
+    echo "   Arch/Manjaro: sudo pacman -S cmake"
     echo "   Debian/Ubuntu: sudo apt install cmake"
     exit 1
 fi
 
 if ! command -v qmake6 >/dev/null 2>&1 && ! command -v qmake >/dev/null 2>&1; then
     echo "❌ Error: Qt6 not found. Install with:"
-    echo "   Arch: sudo pacman -S qt6-base qt6-declarative"
+    echo "   Arch/Manjaro: sudo pacman -S qt6-base qt6-declarative"
     echo "   Debian/Ubuntu: sudo apt install qt6-base-dev qt6-declarative-dev"
     exit 1
 fi
 
-if ! ldconfig -p | grep -q libmosquitto; then
-    echo "❌ Error: libmosquitto not found. Install with:"
-    echo "   Arch: sudo pacman -S mosquitto"
-    echo "   Debian/Ubuntu: sudo apt install libmosquitto-dev"
+# Check for Qt6 Mqtt module
+if ! ldconfig -p | grep -q libQt6Mqtt && ! find /usr/lib* -name "libQt6Mqtt.so*" 2>/dev/null | grep -q .; then
+    echo "❌ Error: Qt6 Mqtt module not found. Install with:"
+    echo "   Arch/Manjaro: sudo pacman -S qt6-mqtt"
+    echo "   Debian/Ubuntu: sudo apt install libqt6mqtt6-dev"
+    echo "   Fedora: sudo dnf install qt6-qtmqtt-devel"
     exit 1
 fi
 
@@ -100,7 +102,10 @@ echo "   kquitapp6 plasmashell && kstart plasmashell &"
 echo ""
 echo "📖 Configuration:"
 echo "   Host: homeassistant.lan (or your MQTT broker)"
-echo "   Port: 1883 (standard MQTT port, NOT WebSocket 1884)"
+echo "   Port: 1883 (standard MQTT port)"
 echo "   Topic: zigbee2mqtt/# (or your desired topic)"
+echo ""
+echo "💡 Note: Uses Qt6 Mqtt module (not WebSocket)"
+echo "   Connects directly to standard MQTT port 1883"
 echo ""
 echo "✅ Installation successful!"
