@@ -33,6 +33,7 @@ void MQTTClient::setHost(const QString &host)
     if (m_host != host) {
         qDebug() << "Setting host:" << host;
         m_host = host;
+        m_client->setHostname(host);  // propagate immediately
         emit hostChanged();
     }
 }
@@ -42,6 +43,7 @@ void MQTTClient::setPort(int port)
     if (m_port != port) {
         qDebug() << "Setting port:" << port;
         m_port = port;
+        m_client->setPort(static_cast<quint16>(port));  // propagate immediately
         emit portChanged();
     }
 }
@@ -51,6 +53,7 @@ void MQTTClient::setUsername(const QString &username)
     if (m_username != username) {
         qDebug() << "Setting username:" << username;
         m_username = username;
+        m_client->setUsername(username);  // propagate immediately
         emit usernameChanged();
     }
 }
@@ -60,6 +63,7 @@ void MQTTClient::setPassword(const QString &password)
     if (m_password != password) {
         qDebug() << "Setting password: [" << (password.isEmpty() ? "empty" : "set") << "]";
         m_password = password;
+        m_client->setPassword(password);  // propagate immediately
         emit passwordChanged();
     }
 }
@@ -114,51 +118,30 @@ void MQTTClient::connectToHost()
     connect(transport, &QTcpSocket::connected, this, [this]() {
         qDebug() << "✅ TCP Socket connected!";
     });
-    
     connect(transport, &QTcpSocket::disconnected, this, [this]() {
         qDebug() << "❌ TCP Socket disconnected";
     });
-    
     connect(transport, &QTcpSocket::stateChanged, this, [](QAbstractSocket::SocketState state) {
         qDebug() << "🔄 TCP Socket state:" << state;
     });
-    
     connect(transport, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred),
             this, [](QAbstractSocket::SocketError error) {
         qWarning() << "🔴 TCP Socket error:" << error;
     });
     
-    qDebug() << "Socket created, state:" << transport->state();
-    
     // Set transport
-    qDebug() << "🔗 Setting transport on QMqttClient...";
     m_client->setTransport(transport, QMqttClient::AbstractSocket);
-    
     qDebug() << "Transport set, pointer:" << m_client->transport();
     
-    // Set connection parameters AFTER transport
-    qDebug() << "⚙️ Setting connection parameters...";
+    // Ensure all parameters are set on m_client (already set via setters, but be explicit)
     m_client->setHostname(m_host);
     m_client->setPort(static_cast<quint16>(m_port));
-    
-    if (!m_username.isEmpty()) {
-        m_client->setUsername(m_username);
-    }
-    
-    if (!m_password.isEmpty()) {
-        m_client->setPassword(m_password);
-    }
-    
-    qDebug() << "✓ Client configured:";
-    qDebug() << "  Hostname:" << m_client->hostname();
-    qDebug() << "  Port:" << m_client->port();
-    qDebug() << "  Username:" << m_client->username();
+    if (!m_username.isEmpty()) m_client->setUsername(m_username);
+    if (!m_password.isEmpty()) m_client->setPassword(m_password);
     
     qDebug() << "🚀 Calling connectToHost()...";
     m_client->connectToHost();
-    
-    qDebug() << "⏳ connectToHost() called, state:" << m_client->state();
-    qDebug() << "⏳ Waiting for connection... (TCP socket state:" << transport->state() << ")";
+    qDebug() << "⏳ State after connectToHost():" << m_client->state();
     qDebug() << "========================================";
 }
 
@@ -204,31 +187,14 @@ void MQTTClient::onErrorChanged(QMqttClient::ClientError error)
 
     QString errorString;
     switch (error) {
-        case QMqttClient::InvalidProtocolVersion:
-            errorString = "Invalid protocol version";
-            break;
-        case QMqttClient::IdRejected:
-            errorString = "Client ID rejected";
-            break;
-        case QMqttClient::ServerUnavailable:
-            errorString = "Server unavailable";
-            break;
-        case QMqttClient::BadUsernameOrPassword:
-            errorString = "Bad username or password";
-            break;
-        case QMqttClient::NotAuthorized:
-            errorString = "Not authorized";
-            break;
-        case QMqttClient::TransportInvalid:
-            errorString = "Transport invalid";
-            break;
-        case QMqttClient::ProtocolViolation:
-            errorString = "Protocol violation";
-            break;
-        case QMqttClient::UnknownError:
-        default:
-            errorString = "Unknown error";
-            break;
+        case QMqttClient::InvalidProtocolVersion: errorString = "Invalid protocol version"; break;
+        case QMqttClient::IdRejected:             errorString = "Client ID rejected"; break;
+        case QMqttClient::ServerUnavailable:      errorString = "Server unavailable"; break;
+        case QMqttClient::BadUsernameOrPassword:  errorString = "Bad username or password"; break;
+        case QMqttClient::NotAuthorized:          errorString = "Not authorized"; break;
+        case QMqttClient::TransportInvalid:       errorString = "Transport invalid"; break;
+        case QMqttClient::ProtocolViolation:      errorString = "Protocol violation"; break;
+        default:                                  errorString = "Unknown error"; break;
     }
 
     qWarning() << "⚠️ MQTT Error:" << errorString;
@@ -240,13 +206,11 @@ void MQTTClient::updateSubscription()
     if (!connected() || m_topic.isEmpty())
         return;
 
-    // Unsubscribe from previous topic
     if (m_subscription) {
         m_subscription->unsubscribe();
         m_subscription = nullptr;
     }
 
-    // Subscribe to new topic
     qDebug() << "📡 Subscribing to topic:" << m_topic;
     m_subscription = m_client->subscribe(m_topic, 0);
 
