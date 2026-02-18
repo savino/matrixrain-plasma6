@@ -1,6 +1,6 @@
-# Matrix-style Wallpaper for KDE Plasma 6
+# MQTT Rain Wallpaper for KDE Plasma 6
 
-Provides a Matrix-esque "code rainfall" background wallpaper for Plasma 6, with some fun custommizations.
+Provides an MQTT-enabled "code rainfall" background wallpaper for Plasma 6 that can render incoming MQTT messages (e.g., from zigbee2mqtt) as the falling characters. Also supports color modes, jitter, and glitch effects.
 
 ![screenshot.png](screenshot.png)
 
@@ -11,6 +11,7 @@ Provides a Matrix-esque "code rainfall" background wallpaper for Plasma 6, with 
 - Customize drop speed
 - Jitter effect
 - Glitch chance for a random bright white characters
+- Optionally enable MQTT (websocket) and set broker+topic to print incoming messages
 
 ## Installation
 

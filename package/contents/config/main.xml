@@ -7,5 +7,13 @@
     <Entry key="paletteIndex" type="Int"><Default>0</Default></Entry>
     <Entry key="jitter" type="Double"><Default>0.0</Default></Entry>
     <Entry key="glitchChance" type="Int"><Default>1</Default><Range min="0" max="100"/></Entry>
+    <Entry key="mqttEnable" type="Bool"><Default>true</Default></Entry>
+    <Entry key="mqttHost" type="String"><Default>homeassistant.lan</Default></Entry>
+    <Entry key="mqttPort" type="Int"><Default>1884</Default></Entry>
+    <Entry key="mqttPath" type="String"><Default>/</Default></Entry>
+    <Entry key="mqttTopic" type="String"><Default>zigbee2mqtt/#</Default></Entry>
+    <Entry key="mqttUsername" type="String"><Default>mqtt_user</Default></Entry>
+    <Entry key="mqttPassword" type="String"><Default>mqtt_user</Default></Entry>
+    <Entry key="debugOverlay" type="Bool"><Default>false</Default></Entry>
   </Group>
 </Config>
