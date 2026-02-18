@@ -1,5 +1,6 @@
 #include "mqttclient.h"
 #include <QDebug>
+#include <QTcpSocket>
 
 MQTTClient::MQTTClient(QObject *parent)
     : QObject(parent)
@@ -7,10 +8,17 @@ MQTTClient::MQTTClient(QObject *parent)
     , m_subscription(nullptr)
     , m_port(1883)
 {
+    // CRITICAL: Qt6 requires explicit transport initialization
+    // Without this, connectToHost() will fail with "Transport invalid"
+    auto *transport = new QTcpSocket(this);
+    m_client->setTransport(transport, QMqttClient::IODevice);
+    
     // Connect signals
     connect(m_client, &QMqttClient::connected, this, &MQTTClient::onConnected);
     connect(m_client, &QMqttClient::disconnected, this, &MQTTClient::onDisconnected);
     connect(m_client, &QMqttClient::errorChanged, this, &MQTTClient::onErrorChanged);
+    
+    qDebug() << "MQTTClient initialized with TCP transport";
 }
 
 MQTTClient::~MQTTClient()
