@@ -21,7 +21,6 @@ An MQTT-enabled "code rainfall" background wallpaper for Plasma 6 that displays 
 - **Debug overlay** - Optional on-screen debugging information
 - **High performance** - C++ plugin with Qt6 integration
 - **Full MQTT spec compliance** - QoS levels, authentication, wildcard topics
-- **Standard Qt library** - No external dependencies beyond Qt itself
 
 ## Installation
 
@@ -46,8 +45,6 @@ sudo dnf install cmake qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmqtt-devel
 
 ### Build and Install
 
-The installation script will automatically build the C++ plugin and install everything:
-
 ```bash
 git clone https://github.com/savino/matrixrain-plasma6.git
 cd matrixrain-plasma6
@@ -60,16 +57,75 @@ The script will:
 2. Build the C++ MQTT plugin
 3. Install the plugin to `~/.local/lib/qt6/qml/`
 4. Install the wallpaper package
+5. **Check and configure `QML2_IMPORT_PATH`** (see below)
 
-### Post-Installation
+---
 
-Restart Plasma Shell to load the new wallpaper:
+## ⚠️ Critical: QML2_IMPORT_PATH
 
-```bash
-kquitapp6 plasmashell && kstart plasmashell &
+This wallpaper uses a **native C++ QML plugin** (`libmqttrainplugin.so`) installed in a
+non-standard path (`~/.local/lib/qt6/qml/`). KDE Plasma's `plasmashell` must be told
+where to look for it via the `QML2_IMPORT_PATH` environment variable.
+
+**Without this variable set before `plasmashell` starts, the wallpaper will fail with:**
+```
+module "ObsidianReq.MQTTRain" is not installed
 ```
 
-Then open **System Settings → Appearance → Wallpaper** and select **"Matrix Rain MQTT"**.
+### Why it's needed
+
+Qt's QML engine searches for plugins only in its built-in paths by default.
+User-installed plugins under `~/.local/` are not included unless explicitly declared.
+`QML2_IMPORT_PATH` extends this search path at runtime.
+
+### Setting it permanently
+
+The `install.sh` script will detect if the variable is missing or incomplete and offer
+to add it automatically to your shell config. If you prefer to do it manually:
+
+**bash / zsh:**
+```bash
+echo 'export QML2_IMPORT_PATH="$HOME/.local/lib/qt6/qml:${QML2_IMPORT_PATH:-}"' >> ~/.bashrc
+# or for zsh:
+echo 'export QML2_IMPORT_PATH="$HOME/.local/lib/qt6/qml:${QML2_IMPORT_PATH:-}"' >> ~/.zshrc
+```
+
+**fish:**
+```fish
+echo 'set -gx QML2_IMPORT_PATH $HOME/.local/lib/qt6/qml $QML2_IMPORT_PATH' >> ~/.config/fish/config.fish
+```
+
+### Why a logout/relogin is required
+
+`plasmashell` is launched by the **KDE session manager** (`startplasma-wayland` /
+`startplasma-x11`) before any shell rc file (`.bashrc`, `.zshrc`) is sourced.
+Simply running `source ~/.bashrc` in a terminal is **not enough**.
+
+After adding the variable you must either:
+- **Log out and log back in** to your KDE session, or
+- **Reboot**
+
+For an immediate test in the current session without rebooting:
+```bash
+export QML2_IMPORT_PATH="$HOME/.local/lib/qt6/qml:${QML2_IMPORT_PATH:-}"
+plasmashell --replace &
+```
+
+### KDE Plasma environment file (alternative)
+
+For a more robust solution that survives shell changes, you can also add the variable
+to KDE's own environment file — this is sourced by the session manager directly:
+```bash
+mkdir -p ~/.config/plasma-workspace/env
+cat >> ~/.config/plasma-workspace/env/qml2importpath.sh << 'EOF'
+export QML2_IMPORT_PATH="$HOME/.local/lib/qt6/qml:${QML2_IMPORT_PATH:-}"
+EOF
+chmod +x ~/.config/plasma-workspace/env/qml2importpath.sh
+```
+This approach works regardless of which shell you use and does not require editing
+`.bashrc` or `.zshrc`.
+
+---
 
 ## Configuration
 
@@ -81,6 +137,7 @@ Then open **System Settings → Appearance → Wallpaper** and select **"Matrix 
 4. **MQTT Topic** - Topic to subscribe to (supports wildcards like `zigbee2mqtt/#`)
 5. **Username/Password** - Optional authentication credentials
 6. **Debug Overlay** - Show connection status and last message on screen
+7. **Debug MQTT logging** - Print full MQTT messages to the system journal (off by default)
 
 ### Example Configurations
 
@@ -125,8 +182,7 @@ The wallpaper consists of two components:
    - Native Qt6 QML plugin
    - Uses **Qt6 Mqtt module** for MQTT protocol implementation
    - Exposes `MQTTClient` type to QML
-   - Thread-safe signal/slot communication
-   - Seamless Qt event loop integration
+   - Direct TCP connection using `QTcpSocket` as `IODevice` transport
 
 2. **QML Wallpaper** (`package/`)
    - Canvas-based Matrix rain rendering
@@ -143,8 +199,6 @@ The wallpaper consists of two components:
 
 ### Building Manually
 
-If you prefer to build the plugin separately:
-
 ```bash
 cd plugin
 mkdir build && cd build
@@ -158,16 +212,12 @@ make install
 ### Enable Debug Logging
 
 Monitor wallpaper logs in real-time:
-
 ```bash
 journalctl -f | grep -i mqttrain
 ```
 
-Or view logs from current boot:
-
-```bash
-journalctl -b -0 | grep -i mqttrain
-```
+Enable **"Debug MQTT logging"** in the wallpaper settings to see full MQTT message
+payloads in the journal.
 
 ### Common Issues
 
@@ -175,35 +225,20 @@ journalctl -b -0 | grep -i mqttrain
 ```
 module "ObsidianReq.MQTTRain" is not installed
 ```
-- Verify plugin was built: `ls ~/.local/lib/qt6/qml/ObsidianReq/MQTTRain/`
-- Check for `libmqttrainplugin.so` and `qmldir`
+- Check `QML2_IMPORT_PATH` — see the [Critical: QML2_IMPORT_PATH](#️-critical-qml2_import_path) section
+- Verify plugin files: `ls ~/.local/lib/qt6/qml/ObsidianReq/MQTTRain/`
 - Re-run `./install.sh`
 
-**Connection fails:**
-- Enable debug overlay to see connection status
-- Verify MQTT broker is running: `mosquitto_sub -h <host> -p 1883 -t '#' -v`
-- Check firewall allows TCP port 1883
-- Verify credentials if authentication is enabled
-- Check broker logs for connection attempts
+**Connection fails / no characters:**
+- Enable debug overlay to see connection status on screen
+- Enable "Debug MQTT logging" and check `journalctl -f | grep MQTTRain`
+- Test broker directly: `mosquitto_sub -h <host> -p 1883 -t '#' -v`
+- Verify credentials and firewall rules
 
 **Build errors:**
-- Ensure all dependencies are installed (especially `qt6-mqtt`)
-- Check Qt6 version: `qmake6 --version` (requires 6.0+)
-- Verify Qt6 Mqtt module: `find /usr/lib* -name "libQt6Mqtt.so*"`
-- Check CMake output for missing packages
-
-**No characters appearing:**
-- Enable debug overlay to verify messages are being received
-- Check that you're subscribed to an active topic with messages
-- Test topic with: `mosquitto_sub -h <host> -p 1883 -t <topic> -v`
-- Verify MQTT credentials match broker configuration
-
-**Qt6 Mqtt module not found:**
-```
-Project ERROR: Unknown module(s) in QT: mqtt
-```
-- Install qt6-mqtt package for your distribution (see Dependencies section)
-- On some distributions, you may need to compile QtMqtt from source
+- Ensure `qt6-mqtt` is installed
+- Check Qt6 version: `qmake6 --version`
+- Verify Qt6 Mqtt: `find /usr/lib* -name "libQt6Mqtt.so*"`
 
 ## Development
 
@@ -212,56 +247,35 @@ Project ERROR: Unknown module(s) in QT: mqtt
 ```
 matrixrain-plasma6/
 ├── plugin/              # C++ MQTT plugin
-│   ├── CMakeLists.txt   # Build configuration
-│   ├── plugin.cpp       # QML plugin registration
-│   ├── mqttclient.h     # MQTTClient class header
-│   ├── mqttclient.cpp   # Implementation (uses Qt6::Mqtt)
-│   ├── qmldir           # QML module definition
-│   └── build/           # Build output (created by cmake)
-├── package/             # Plasma wallpaper package
-│   ├── metadata.json    # Package metadata
+│   ├── CMakeLists.txt
+│   ├── plugin.cpp
+│   ├── mqttclient.h
+│   ├── mqttclient.cpp
+│   ├── qmldir
+│   └── build/
+├── package/
+│   ├── metadata.json
 │   └── contents/
+│       ├── config/
+│       │   └── main.xml         # Config keys and defaults
 │       └── ui/
-│           ├── main.qml           # Main wallpaper logic
-│           └── config.qml         # Settings UI
-├── install.sh           # Installation script
-├── .gitignore           # Git ignore patterns
+│           ├── main.qml         # Wallpaper logic + Matrix rendering
+│           └── config.qml       # Settings UI
+├── install.sh
+├── .gitignore
 └── README.md
 ```
 
 ### Adding Features
 
-**To modify MQTT behavior:**
-- Edit `plugin/mqttclient.cpp` (C++ implementation)
-- Rebuild: `cd plugin/build && make && make install`
+**To modify MQTT behavior:** edit `plugin/mqttclient.cpp`, then rebuild:
+```bash
+cd plugin/build && make -j$(nproc)
+cp libmqttrainplugin.so ~/.local/lib/qt6/qml/ObsidianReq/MQTTRain/
+```
 
-**To modify visual effects:**
-- Edit `package/contents/ui/main.qml`
-- Reload wallpaper: Right-click desktop → Configure Desktop and Wallpaper
-
-### Why Qt6 Mqtt?
-
-Qt6 Mqtt module provides:
-- Official Qt Project support and maintenance
-- Native C++ Qt API with Qt signals/slots
-- Standard package availability across distributions
-- No external C library dependencies
-- Full MQTT 3.1, 3.1.1, and 5.0 support
-- Better integration with Qt event loop
-
-## Reporting Bugs
-
-If you encounter issues:
-
-1. Enable debug overlay in wallpaper settings
-2. Start log monitoring: `journalctl -f | grep -i --line-buffered mqttrain`
-3. Reproduce the issue
-4. [Open an issue](https://github.com/savino/matrixrain-plasma6/issues) with:
-   - Description of the problem
-   - Steps to reproduce
-   - Relevant log output
-   - Your configuration (host, port, topic)
-   - Output of `./install.sh` if build-related
+**To modify visual effects:** edit `package/contents/ui/main.qml`, then reload
+the wallpaper from the desktop right-click menu.
 
 ## License
 

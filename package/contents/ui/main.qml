@@ -42,6 +42,7 @@ WallpaperItem {
         console.log("[MQTTRain] " + msg)
     }
 
+    // Only logs when 'Debug MQTT logging' is enabled in settings
     function writeDebug(msg) {
         if (main.mqttDebug)
             console.log("[MQTTRain][debug] " + msg)
@@ -62,7 +63,8 @@ WallpaperItem {
         }
 
         onMessageReceived: function(topic, payload) {
-            main.writeDebug("📨 [" + topic + "] " + payload.substring(0, 80))
+            // Full payload — no truncation
+            main.writeDebug("📨 [" + topic + "] " + payload)
             main.lastTopic = topic
             main.lastPayload = payload
             main.messagesReceived++
