@@ -2,6 +2,7 @@
 #include <QObject>
 #include <QMqttClient>
 #include <QMqttSubscription>
+#include <QTcpSocket>
 #include <QTimer>
 
 class MQTTClient : public QObject
@@ -56,6 +57,7 @@ private:
     QMqttClient       *m_client;
     QMqttSubscription *m_subscription;
     QTimer            *m_connackTimer;
+    QTcpSocket        *m_socket;
     QString            m_host;
     int                m_port;
     QString            m_username;

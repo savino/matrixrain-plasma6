@@ -1,7 +1,6 @@
 #include "mqttclient.h"
 #include <QDebug>
 #include <QTcpSocket>
-#include <QEventLoop>
 #include <QTimer>
 
 MQTTClient::MQTTClient(QObject *parent)
@@ -10,24 +9,21 @@ MQTTClient::MQTTClient(QObject *parent)
     , m_subscription(nullptr)
     , m_port(1883)
     , m_connackTimer(new QTimer(this))
+    , m_socket(nullptr)
 {
-    connect(m_client, &QMqttClient::connected,     this, &MQTTClient::onConnected);
-    connect(m_client, &QMqttClient::disconnected,  this, &MQTTClient::onDisconnected);
-    connect(m_client, &QMqttClient::errorChanged,  this, &MQTTClient::onErrorChanged);
-    connect(m_client, &QMqttClient::stateChanged,  this, [](QMqttClient::ClientState s) {
+    connect(m_client, &QMqttClient::connected,    this, &MQTTClient::onConnected);
+    connect(m_client, &QMqttClient::disconnected, this, &MQTTClient::onDisconnected);
+    connect(m_client, &QMqttClient::errorChanged, this, &MQTTClient::onErrorChanged);
+    connect(m_client, &QMqttClient::stateChanged, this, [](QMqttClient::ClientState s) {
         qDebug() << "📊 MQTT state:" << s;
     });
 
-    // Timeout if broker never sends CONNACK
     m_connackTimer->setSingleShot(true);
     m_connackTimer->setInterval(5000);
     connect(m_connackTimer, &QTimer::timeout, this, [this]() {
-        if (m_client->state() == QMqttClient::Connecting) {
-            qWarning() << "⏰ CONNACK timeout! TCP ok but broker never replied to MQTT CONNECT.";
-            qWarning() << "   Likely cause: wrong credentials, broker ACL, or wrong MQTT version.";
-            emit connectionError("CONNACK timeout");
-            m_client->disconnectFromHost();
-        }
+        qWarning() << "⏰ CONNACK timeout!";
+        emit connectionError("CONNACK timeout");
+        disconnectFromHost();
     });
 
     qDebug() << "MQTTClient initialized, Qt:" << qVersion();
@@ -35,8 +31,7 @@ MQTTClient::MQTTClient(QObject *parent)
 
 MQTTClient::~MQTTClient()
 {
-    if (m_client->state() == QMqttClient::Connected)
-        m_client->disconnectFromHost();
+    disconnectFromHost();
 }
 
 void MQTTClient::setHost(const QString &host)
@@ -110,46 +105,59 @@ void MQTTClient::connectToHost()
     qDebug() << "  port:"  << m_port;
     qDebug() << "  user:"  << m_username;
     qDebug() << "  topic:" << m_topic;
-    qDebug() << "  state:" << m_client->state();
 
-    if (m_client->state() == QMqttClient::Connected) {
-        m_client->disconnectFromHost();
-        QEventLoop loop;
-        connect(m_client, &QMqttClient::disconnected, &loop, &QEventLoop::quit);
-        QTimer::singleShot(1000, &loop, &QEventLoop::quit);
-        loop.exec();
+    // Clean up previous socket
+    if (m_socket) {
+        m_socket->disconnect();
+        m_socket->abort();
+        m_socket->deleteLater();
+        m_socket = nullptr;
     }
 
-    // Fresh transport every time
-    auto *sock = new QTcpSocket(m_client);
+    // Step 1: Create socket and connect TCP manually
+    m_socket = new QTcpSocket(this);
 
-    connect(sock, &QTcpSocket::stateChanged, [](QAbstractSocket::SocketState s) {
+    connect(m_socket, &QTcpSocket::stateChanged, [](QAbstractSocket::SocketState s) {
         qDebug() << "🔄 TCP state:" << s;
     });
-    connect(sock, &QTcpSocket::connected, []() {
-        qDebug() << "✅ TCP connected";
-    });
-    connect(sock, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred),
-            [](QAbstractSocket::SocketError e) {
-        qWarning() << "🔴 TCP error:" << e;
-    });
-    // Log raw bytes — will show CONNACK (0x20...) or nothing
-    connect(sock, &QTcpSocket::readyRead, [sock]() {
-        QByteArray data = sock->peek(sock->bytesAvailable());
-        qDebug() << "📥 Broker raw reply (" << data.size() << "bytes):" << data.toHex();
+
+    connect(m_socket, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred),
+            this, [this](QAbstractSocket::SocketError e) {
+        qWarning() << "🔴 TCP error:" << e << m_socket->errorString();
+        emit connectionError("TCP: " + m_socket->errorString());
     });
 
-    m_client->setTransport(sock, QMqttClient::AbstractSocket);
-    m_client->setHostname(m_host);
-    m_client->setPort(static_cast<quint16>(m_port));
-    m_client->setUsername(m_username);
-    m_client->setPassword(m_password);
+    connect(m_socket, &QTcpSocket::bytesWritten, [](qint64 bytes) {
+        qDebug() << "↑ Bytes written to broker:" << bytes;
+    });
 
-    qDebug() << "  → hostname:" << m_client->hostname() << "port:" << m_client->port();
+    connect(m_socket, &QTcpSocket::readyRead, [this]() {
+        QByteArray data = m_socket->peek(m_socket->bytesAvailable());
+        qDebug() << "↓ Broker raw reply (" << data.size() << "bytes):" << data.toHex();
+    });
 
-    m_connackTimer->start();
-    m_client->connectToHost();
-    qDebug() << "  state after call:" << m_client->state();
+    // Step 2: Once TCP connects, attach as IODevice and send MQTT CONNECT
+    connect(m_socket, &QTcpSocket::connected, this, [this]() {
+        qDebug() << "✅ TCP connected! Setting IODevice transport and sending MQTT CONNECT...";
+
+        // Set MQTT parameters
+        m_client->setHostname(m_host);
+        m_client->setPort(static_cast<quint16>(m_port));
+        m_client->setUsername(m_username);
+        m_client->setPassword(m_password);
+
+        // Use pre-connected socket as IODevice
+        // QMqttClient will immediately send MQTT CONNECT packet
+        m_client->setTransport(m_socket, QMqttClient::IODevice);
+
+        m_connackTimer->start();
+        m_client->connectToHost();
+
+        qDebug() << "  MQTT state after connectToHost():" << m_client->state();
+    });
+
+    qDebug() << "  Connecting TCP to" << m_host << ":" << m_port;
+    m_socket->connectToHost(m_host, static_cast<quint16>(m_port));
     qDebug() << "======================";
 }
 
@@ -161,6 +169,9 @@ void MQTTClient::disconnectFromHost()
         m_subscription = nullptr;
     }
     m_client->disconnectFromHost();
+    if (m_socket) {
+        m_socket->abort();
+    }
 }
 
 void MQTTClient::onConnected()
