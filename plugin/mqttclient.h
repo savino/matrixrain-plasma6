@@ -2,59 +2,70 @@
 #define MQTTCLIENT_H
 
 #include <QObject>
-#include <QString>
-#include <QTimer>
-#include <mosquitto.h>
+#include <QtMqtt/QMqttClient>
+#include <QtMqtt/QMqttSubscription>
 
 class MQTTClient : public QObject
 {
     Q_OBJECT
-    Q_PROPERTY(bool connected READ isConnected NOTIFY connectedChanged)
-    Q_PROPERTY(QString lastError READ lastError NOTIFY errorChanged)
+    Q_PROPERTY(QString host READ host WRITE setHost NOTIFY hostChanged)
+    Q_PROPERTY(int port READ port WRITE setPort NOTIFY portChanged)
+    Q_PROPERTY(QString username READ username WRITE setUsername NOTIFY usernameChanged)
+    Q_PROPERTY(QString password READ password WRITE setPassword NOTIFY passwordChanged)
+    Q_PROPERTY(QString topic READ topic WRITE setTopic NOTIFY topicChanged)
+    Q_PROPERTY(bool connected READ connected NOTIFY connectedChanged)
 
 public:
     explicit MQTTClient(QObject *parent = nullptr);
-    ~MQTTClient() override;
+    ~MQTTClient();
 
-    // QML-callable methods
-    Q_INVOKABLE void connectToHost(const QString &host,
-                                   int port,
-                                   const QString &username = QString(),
-                                   const QString &password = QString(),
-                                   int keepalive = 60);
-    Q_INVOKABLE void disconnect();
-    Q_INVOKABLE void subscribe(const QString &topic, int qos = 0);
-    Q_INVOKABLE void publish(const QString &topic, const QString &payload, int qos = 0, bool retain = false);
+    QString host() const { return m_host; }
+    void setHost(const QString &host);
 
-    // Properties
-    bool isConnected() const { return m_connected; }
-    QString lastError() const { return m_lastError; }
+    int port() const { return m_port; }
+    void setPort(int port);
+
+    QString username() const { return m_username; }
+    void setUsername(const QString &username);
+
+    QString password() const { return m_password; }
+    void setPassword(const QString &password);
+
+    QString topic() const { return m_topic; }
+    void setTopic(const QString &topic);
+
+    bool connected() const;
+
+public slots:
+    void connectToHost();
+    void disconnectFromHost();
 
 signals:
+    void hostChanged();
+    void portChanged();
+    void usernameChanged();
+    void passwordChanged();
+    void topicChanged();
     void connectedChanged();
-    void disconnected();
     void messageReceived(const QString &topic, const QString &payload);
-    void errorOccurred(const QString &error);
-    void errorChanged();
-    void subscribed(const QString &topic);
-    void debugMessage(const QString &message);
+    void connectionError(const QString &error);
+
+private slots:
+    void onConnected();
+    void onDisconnected();
+    void onMessageReceived(const QMqttMessage &message);
+    void onErrorChanged(QMqttClient::ClientError error);
 
 private:
-    // libmosquitto callbacks (static)
-    static void on_connect_callback(struct mosquitto *mosq, void *obj, int rc);
-    static void on_disconnect_callback(struct mosquitto *mosq, void *obj, int rc);
-    static void on_message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_message *message);
-    static void on_subscribe_callback(struct mosquitto *mosq, void *obj, int mid, int qos_count, const int *granted_qos);
-    static void on_log_callback(struct mosquitto *mosq, void *obj, int level, const char *str);
+    QMqttClient *m_client;
+    QMqttSubscription *m_subscription;
+    QString m_host;
+    int m_port;
+    QString m_username;
+    QString m_password;
+    QString m_topic;
 
-    // Internal state
-    struct mosquitto *m_mosq;
-    bool m_connected;
-    QString m_lastError;
-    QTimer *m_loopTimer;
-
-    void setError(const QString &error);
-    void setConnected(bool connected);
+    void updateSubscription();
 };
 
 #endif // MQTTCLIENT_H
