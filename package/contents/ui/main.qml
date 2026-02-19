@@ -26,9 +26,13 @@ WallpaperItem {
 
     // State
     property var messageChars: []
-    // History of last 5 messages for the debug overlay: [{topic, payload}, ...] newest first
-    property var messageHistory: []
+
+    // Ring-buffer di 5 slot fissi: null = slot vuoto, {topic, payload} = messaggio
+    property var messageHistory: [null, null, null, null, null]
     readonly property int maxHistory: 5
+    // Punta allo slot che riceverà il prossimo messaggio (= posizione del più vecchio)
+    property int mqttNextSlot: 0
+
     property bool debugOverlay: main.configuration.debugOverlay !== undefined ? main.configuration.debugOverlay : false
     property int messagesReceived: 0
 
@@ -64,11 +68,10 @@ WallpaperItem {
             main.writeDebug("📨 [" + topic + "] " + payload)
             main.messagesReceived++
 
-            // Push new message to the front of the history, keep max 5
+            // Ring-buffer: scrivi nello slot più vecchio, poi avanza il puntatore
             var hist = main.messageHistory.slice()
-            hist.unshift({ topic: topic, payload: payload })
-            if (hist.length > main.maxHistory)
-                hist = hist.slice(0, main.maxHistory)
+            hist[main.mqttNextSlot] = { topic: topic, payload: payload }
+            main.mqttNextSlot = (main.mqttNextSlot + 1) % main.maxHistory
             main.messageHistory = hist
 
             // Build the display string for the rain: "topic: payload/"
@@ -175,35 +178,36 @@ WallpaperItem {
             }
 
             // ----------------------------------------------------------------
-            // Debug overlay
+            // Debug overlay — ring-buffer: 5 slot fissi, nessuno scroll
             // Layout (y positions):
-            //   26  — title
-            //   46  — MQTT status
+            //   26  — titolo
+            //   46  — stato MQTT
             //   62  — broker
             //   78  — topic
-            //   94  — msgs count
-            //  112  — "Recent messages:" label
-            //  128…208 — 5 message lines (16px apart)
+            //   94  — contatore messaggi
+            //  103  — separatore
+            //  116  — etichetta sezione messaggi
+            //  132…196 — 5 slot fissi (LINE=16px), posizioni invarianti
             // ----------------------------------------------------------------
             if (main.debugOverlay) {
                 var BOX_X = 8
                 var BOX_Y = 8
                 var BOX_W = 760
                 var BOX_H = 222
-                var TX    = 14   // text left margin
-                var LINE  = 16   // line height for message rows
+                var TX    = 14   // margine sinistro testo
+                var LINE  = 16   // altezza riga slot messaggi
 
                 ctx.fillStyle = "rgba(0,0,0,0.88)"
                 ctx.fillRect(BOX_X, BOX_Y, BOX_W, BOX_H)
 
-                // Title
+                // Titolo
                 ctx.font = "bold 13px monospace"
                 ctx.fillStyle = "#00ff00"
                 ctx.fillText("⚙️ MQTT Rain Debug", TX, 26)
 
                 ctx.font = "12px monospace"
 
-                // MQTT status
+                // Stato MQTT
                 ctx.fillStyle = mqttClient.connected ? "#00ff00" : "#ff4444"
                 ctx.fillText("MQTT:   " + (mqttClient.connected ? "✅ CONNECTED" : "❌ DISCONNECTED"), TX, 46)
 
@@ -212,33 +216,35 @@ WallpaperItem {
                 ctx.fillText("Broker: " + main.mqttHost + ":" + main.mqttPort, TX, 62)
                 ctx.fillText("Topic:  " + main.mqttTopic, TX, 78)
 
-                // Message count
+                // Contatore
                 ctx.fillStyle = "#aaaaaa"
                 ctx.fillText("Msgs:   " + main.messagesReceived + "  |  Chars in rain: " + main.messageChars.length, TX, 94)
 
-                // Separator label
+                // Separatore
                 ctx.fillStyle = "#555555"
                 ctx.fillRect(TX, 103, BOX_W - 20, 1)
                 ctx.fillStyle = "#888888"
-                ctx.fillText("Recent messages (newest first):", TX, 116)
+                ctx.fillText("Messaggi MQTT — ring-buffer (il più vecchio viene sovrascritto):", TX, 116)
 
-                // Last 5 messages — newest is brightest, older ones dimmer
-                var alphas = ["#ffff00", "#cccc00", "#999900", "#666600", "#444400"]
-                var hist = main.messageHistory
-                var baseY = 132
+                // 5 slot fissi — nessuna sfumatura, colore uniforme
+                // Lo slot scritto più di recente = (mqttNextSlot - 1 + maxHistory) % maxHistory
+                var hist     = main.messageHistory
+                var baseY    = 132
+                var newestSlot = (main.mqttNextSlot - 1 + main.maxHistory) % main.maxHistory
 
-                if (hist.length === 0) {
-                    ctx.fillStyle = "#555555"
-                    ctx.fillText("(waiting for messages...)", TX, baseY)
-                } else {
-                    for (var m = 0; m < hist.length; m++) {
-                        var entry = hist[m]
-                        var line  = entry.topic + ": " + entry.payload
-                        // Truncate to fit the box (~100 chars at 12px monospace in 760px)
-                        if (line.length > 98)
-                            line = line.substring(0, 95) + "…"
-                        ctx.fillStyle = alphas[m]
-                        ctx.fillText(line, TX, baseY + m * LINE)
+                for (var m = 0; m < main.maxHistory; m++) {
+                    var entry = hist[m]
+                    var prefix = "[" + m + "] "
+                    if (!entry) {
+                        ctx.fillStyle = "#555555"
+                        ctx.fillText(prefix + "(vuoto)", TX, baseY + m * LINE)
+                    } else {
+                        var line = entry.topic + ": " + entry.payload
+                        if (line.length > 95)
+                            line = line.substring(0, 92) + "…"
+                        // Slot più recente in bianco, gli altri in giallo pieno — nessuna sfumatura
+                        ctx.fillStyle = (m === newestSlot) ? "#ffffff" : "#ffff00"
+                        ctx.fillText(prefix + line, TX, baseY + m * LINE)
                     }
                 }
             }
