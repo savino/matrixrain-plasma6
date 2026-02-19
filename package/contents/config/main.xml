@@ -2,6 +2,7 @@
   <Group name="General">
     <Entry key="fontSize" type="Int"><Default>16</Default><Range min="8" max="48"/></Entry>
     <Entry key="speed" type="Int"><Default>50</Default><Range min="1" max="100"/></Entry>
+    <Entry key="fadeStrength" type="Int"><Default>5</Default><Range min="1" max="20"/></Entry>
     <Entry key="colorMode" type="Int"><Default>0</Default></Entry>
     <Entry key="singleColor" type="String"><Default>#00ff00</Default></Entry>
     <Entry key="paletteIndex" type="Int"><Default>0</Default></Entry>

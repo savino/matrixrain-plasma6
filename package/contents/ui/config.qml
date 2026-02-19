@@ -7,33 +7,42 @@ import org.kde.kirigami.layouts 2.0 as KirigamiLayouts
 KirigamiLayouts.FormLayout {
     anchors.fill: parent
 
-    property alias cfg_fontSize: fontSpin.value
-    property alias cfg_speed: speedSpin.value
-    property alias cfg_colorMode: modeCombo.currentIndex
-    property alias cfg_singleColor: colorField.text
-    property alias cfg_paletteIndex: paletteCombo.currentIndex
-    property alias cfg_jitter: jitterSpin.value
-    property alias cfg_glitchChance: glitchSpin.value
-    property alias cfg_mqttEnable: mqttEnable.checked
-    property alias cfg_mqttHost: mqttHost.text
-    property alias cfg_mqttPort: mqttPort.value
-    property alias cfg_mqttPath: mqttPath.text
-    property alias cfg_mqttTopic: mqttTopic.text
-    property alias cfg_mqttUsername: mqttUsername.text
-    property alias cfg_mqttPassword: mqttPassword.text
-    property alias cfg_debugOverlay: debugOverlay.checked
-    property alias cfg_mqttDebug: mqttDebug.checked
+    property alias cfg_fontSize:      fontSpin.value
+    property alias cfg_speed:         speedSpin.value
+    property alias cfg_fadeStrength:  fadeSpin.value
+    property alias cfg_colorMode:     modeCombo.currentIndex
+    property alias cfg_singleColor:   colorField.text
+    property alias cfg_paletteIndex:  paletteCombo.currentIndex
+    property alias cfg_jitter:        jitterSpin.value
+    property alias cfg_glitchChance:  glitchSpin.value
+    property alias cfg_mqttEnable:    mqttEnable.checked
+    property alias cfg_mqttHost:      mqttHost.text
+    property alias cfg_mqttPort:      mqttPort.value
+    property alias cfg_mqttPath:      mqttPath.text
+    property alias cfg_mqttTopic:     mqttTopic.text
+    property alias cfg_mqttUsername:  mqttUsername.text
+    property alias cfg_mqttPassword:  mqttPassword.text
+    property alias cfg_debugOverlay:  debugOverlay.checked
+    property alias cfg_mqttDebug:     mqttDebug.checked
 
     QC.SpinBox {
-        id: fontSpin; from:8; to:48; stepSize:1
+        id: fontSpin; from: 8; to: 48; stepSize: 1
         KirigamiLayouts.FormData.label: qsTr("Font Size")
     }
     QC.SpinBox {
-        id: speedSpin; from:1; to:100; stepSize:1
+        id: speedSpin; from: 1; to: 100; stepSize: 1
         KirigamiLayouts.FormData.label: qsTr("Speed")
     }
+    // fadeStrength: stored as integer 1-20, displayed as 0.01-0.20
+    QC.SpinBox {
+        id: fadeSpin; from: 1; to: 20; stepSize: 1
+        KirigamiLayouts.FormData.label: qsTr("Fade Strength")
+        textFromValue: function(v) { return (v / 100).toFixed(2) }
+        valueFromText: function(t) { return Math.round(parseFloat(t) * 100) }
+        validator: DoubleValidator { bottom: 0.01; top: 0.20; decimals: 2 }
+    }
     QC.ComboBox {
-        id: modeCombo; model:[qsTr("Single Color"), qsTr("Multi Color")]
+        id: modeCombo; model: [qsTr("Single Color"), qsTr("Multi Color")]
         KirigamiLayouts.FormData.label: qsTr("Color Mode")
     }
     QC.TextField {
@@ -46,16 +55,16 @@ KirigamiLayouts.FormLayout {
         onClicked: colorField.text = "#00ff00"
     }
     QC.ComboBox {
-        id: paletteCombo; model:[qsTr("Neon"), qsTr("Cyberpunk"), qsTr("Synthwave")]
+        id: paletteCombo; model: [qsTr("Neon"), qsTr("Cyberpunk"), qsTr("Synthwave")]
         visible: modeCombo.currentIndex === 1
         KirigamiLayouts.FormData.label: qsTr("Palette")
     }
     QC.SpinBox {
-        id: jitterSpin; from:0; to:100; stepSize:1
+        id: jitterSpin; from: 0; to: 100; stepSize: 1
         KirigamiLayouts.FormData.label: qsTr("Jitter (%)")
     }
     QC.SpinBox {
-        id: glitchSpin; from:0; to:100; stepSize:1
+        id: glitchSpin; from: 0; to: 100; stepSize: 1
         KirigamiLayouts.FormData.label: qsTr("Glitch Chance (%)")
     }
     QC.CheckBox {
@@ -67,7 +76,7 @@ KirigamiLayouts.FormLayout {
         KirigamiLayouts.FormData.label: qsTr("MQTT Host")
     }
     QC.SpinBox {
-        id: mqttPort; from:1; to:65535; stepSize:1
+        id: mqttPort; from: 1; to: 65535; stepSize: 1
         KirigamiLayouts.FormData.label: qsTr("MQTT Port")
     }
     QC.TextField {

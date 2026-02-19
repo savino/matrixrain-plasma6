@@ -7,36 +7,37 @@ WallpaperItem {
     id: main
     anchors.fill: parent
 
-    property int fontSize: main.configuration.fontSize !== undefined ? main.configuration.fontSize : 16
-    property int speed: main.configuration.speed !== undefined ? main.configuration.speed : 50
-    property int colorMode: main.configuration.colorMode !== undefined ? main.configuration.colorMode : 0
+    property int  fontSize:    main.configuration.fontSize    !== undefined ? main.configuration.fontSize    : 16
+    property int  speed:       main.configuration.speed       !== undefined ? main.configuration.speed       : 50
+    // fadeStrength: stored as integer 1-20 in config, used as 0.01-0.20 here.
+    // Controls how quickly the trail fades: higher = shorter scie, lower = longer.
+    property real fadeStrength: (main.configuration.fadeStrength !== undefined
+                                 ? main.configuration.fadeStrength : 5) / 100.0
+    property int  colorMode:   main.configuration.colorMode   !== undefined ? main.configuration.colorMode   : 0
     property color singleColor: main.configuration.singleColor !== undefined ? main.configuration.singleColor : "#00ff00"
-    property int paletteIndex: main.configuration.paletteIndex !== undefined ? main.configuration.paletteIndex : 0
-    property real jitter: main.configuration.jitter !== undefined ? main.configuration.jitter : 0
-    property int glitchChance: main.configuration.glitchChance !== undefined ? main.configuration.glitchChance : 1
+    property int  paletteIndex: main.configuration.paletteIndex !== undefined ? main.configuration.paletteIndex : 0
+    property real jitter:      main.configuration.jitter      !== undefined ? main.configuration.jitter      : 0
+    property int  glitchChance: main.configuration.glitchChance !== undefined ? main.configuration.glitchChance : 1
 
     // MQTT settings
-    property bool mqttEnable: main.configuration.mqttEnable !== undefined ? main.configuration.mqttEnable : false
-    property string mqttHost: (main.configuration.mqttHost !== undefined ? main.configuration.mqttHost : "homeassistant.lan").trim()
-    property int mqttPort: main.configuration.mqttPort !== undefined ? main.configuration.mqttPort : 1883
-    property string mqttTopic: (main.configuration.mqttTopic !== undefined ? main.configuration.mqttTopic : "zigbee2mqtt/#").trim()
+    property bool   mqttEnable:   main.configuration.mqttEnable   !== undefined ? main.configuration.mqttEnable   : false
+    property string mqttHost:     (main.configuration.mqttHost     !== undefined ? main.configuration.mqttHost     : "homeassistant.lan").trim()
+    property int    mqttPort:     main.configuration.mqttPort     !== undefined ? main.configuration.mqttPort     : 1883
+    property string mqttTopic:    (main.configuration.mqttTopic    !== undefined ? main.configuration.mqttTopic    : "zigbee2mqtt/#").trim()
     property string mqttUsername: (main.configuration.mqttUsername || "").trim()
     property string mqttPassword: (main.configuration.mqttPassword !== undefined && main.configuration.mqttPassword !== null) ? main.configuration.mqttPassword : ""
-    property bool mqttDebug: main.configuration.mqttDebug !== undefined ? main.configuration.mqttDebug : false
+    property bool   mqttDebug:    main.configuration.mqttDebug    !== undefined ? main.configuration.mqttDebug    : false
 
     // State
+    // messageHistory:      [{topic, payload}, ...]   newest first, max maxHistory
+    // messageHistoryChars: [[{ch,isValue},...], ...]  one slot per history entry
     //
-    // messageHistory:     [{topic, payload}, ...]  newest first, max maxHistory
-    // messageHistoryChars: [[{ch,isValue},...], ...]  parallel array of tagged
-    //                      char arrays, one per history slot.
-    //
-    // Paint rule: column i  ->  slot = i % messageHistoryChars.length
-    //             char idx  ->  (floor(drops[i]) + i) % slotChars.length
+    // Paint rule: column i -> slot = i % messageHistoryChars.length
     property var messageHistory:      []
-    property var messageHistoryChars: []   // [[{ch,isValue}], ...]
+    property var messageHistoryChars: []
     readonly property int maxHistory: 5
     property bool debugOverlay: main.configuration.debugOverlay !== undefined ? main.configuration.debugOverlay : false
-    property int messagesReceived: 0
+    property int  messagesReceived: 0
 
     property var palettes: [
         ["#00ff00","#ff00ff","#00ffff","#ff0000","#ffff00","#0000ff"],
@@ -69,12 +70,7 @@ WallpaperItem {
     // -----------------------------------------------------------------------
     function colorJsonChars(json, result) {
         if (!json || json.length === 0) return
-
-        var ST_STRUCT     = 0
-        var ST_IN_KEY     = 1
-        var ST_IN_VAL_STR = 2
-        var ST_IN_VAL_NUM = 3
-
+        var ST_STRUCT = 0, ST_IN_KEY = 1, ST_IN_VAL_STR = 2, ST_IN_VAL_NUM = 3
         var state = ST_STRUCT, afterColon = false, arrayDepth = 0, escaped = false
         var i = 0
         try {
@@ -161,10 +157,7 @@ WallpaperItem {
         return result
     }
 
-    // -----------------------------------------------------------------------
-    // rebuildHistoryChars: rebuild the full messageHistoryChars array from
-    // the current messageHistory. Called every time history changes.
-    // -----------------------------------------------------------------------
+    // Rebuild the full messageHistoryChars array from the current messageHistory.
     function rebuildHistoryChars() {
         var chars = []
         for (var s = 0; s < main.messageHistory.length; s++) {
@@ -196,19 +189,13 @@ WallpaperItem {
         onMessageReceived: function(topic, payload) {
             var safeTopic   = (topic   != null && topic   !== undefined) ? topic.toString()   : ""
             var safePayload = (payload != null && payload !== undefined) ? payload.toString() : ""
-
             main.writeDebug("📨 [" + safeTopic + "] " + safePayload)
             main.messagesReceived++
-
-            // Update history (newest first, max maxHistory)
             var hist = main.messageHistory.slice()
             hist.unshift({ topic: safeTopic, payload: safePayload })
             if (hist.length > main.maxHistory) hist = hist.slice(0, main.maxHistory)
             main.messageHistory = hist
-
-            // Rebuild all slot char arrays to match the new history
             main.rebuildHistoryChars()
-
             canvas.requestPaint()
         }
 
@@ -261,12 +248,13 @@ WallpaperItem {
             var ctx = getContext("2d")
             var w = width, h = height
 
-            ctx.fillStyle = "rgba(0,0,0,0.05)"
+            // Fade overlay: opacity controlled by fadeStrength (0.01-0.20)
+            ctx.fillStyle = "rgba(0,0,0," + main.fadeStrength + ")"
             ctx.fillRect(0, 0, w, h)
 
-            var histChars   = main.messageHistoryChars   // [[{ch,isValue}],...]
-            var nSlots      = (main.mqttEnable && histChars && histChars.length > 0)
-                              ? histChars.length : 0
+            var histChars = main.messageHistoryChars
+            var nSlots    = (main.mqttEnable && histChars && histChars.length > 0)
+                            ? histChars.length : 0
 
             for (var i = 0; i < drops.length; i++) {
                 var x = i * main.fontSize
@@ -281,9 +269,6 @@ WallpaperItem {
 
                 var ch
                 if (nSlots > 0) {
-                    // Each column is assigned to a history slot by interleaving:
-                    // col 0 -> slot 0 (newest), col 1 -> slot 1, ...
-                    // col nSlots -> slot 0 again, and so on.
                     var slot      = i % nSlots
                     var slotChars = histChars[slot]
                     var slotLen   = (slotChars && slotChars.length > 0) ? slotChars.length : 0
@@ -291,10 +276,7 @@ WallpaperItem {
                     if (slotLen > 0) {
                         var r   = Math.floor(drops[i])
                         var idx = (r + i) % slotLen
-
-                        // Defensive entry check (FIX 4)
-                        var entry = (idx >= 0 && idx < slotChars.length)
-                                    ? slotChars[idx] : null
+                        var entry = (idx >= 0 && idx < slotChars.length) ? slotChars[idx] : null
 
                         if (!entry || typeof entry.ch !== "string" || entry.ch.length === 0) {
                             ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
@@ -310,12 +292,10 @@ WallpaperItem {
                             }
                         }
                     } else {
-                        // Slot exists but is empty: random katakana
                         ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
                         ctx.fillStyle = isGlitch ? "#ffffff" : baseColor
                     }
                 } else {
-                    // No history yet: random katakana
                     ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
                     ctx.fillStyle = isGlitch ? "#ffffff" : baseColor
                 }
@@ -346,15 +326,14 @@ WallpaperItem {
                 ctx.fillText("Broker: " + main.mqttHost + ":" + main.mqttPort, TX, 62)
                 ctx.fillText("Topic:  " + main.mqttTopic, TX, 78)
 
-                // Total chars across all active slots
                 var totalChars = 0
                 for (var s = 0; s < main.messageHistoryChars.length; s++)
                     if (main.messageHistoryChars[s]) totalChars += main.messageHistoryChars[s].length
-
                 ctx.fillStyle = "#aaaaaa"
                 ctx.fillText("Msgs:   " + main.messagesReceived
                              + "  |  Slots: " + main.messageHistoryChars.length
-                             + "  |  Chars: " + totalChars, TX, 94)
+                             + "  |  Chars: " + totalChars
+                             + "  |  Fade: " + main.fadeStrength.toFixed(2), TX, 94)
 
                 ctx.fillStyle = "#555555"
                 ctx.fillRect(TX, 103, BOX_W - 20, 1)
@@ -386,6 +365,7 @@ WallpaperItem {
 
     onFontSizeChanged:     { canvas.initDrops(); canvas.requestPaint() }
     onSpeedChanged:        { timer.interval = 1000 / main.speed }
+    onFadeStrengthChanged: canvas.requestPaint()
     onColorModeChanged:    canvas.requestPaint()
     onSingleColorChanged:  canvas.requestPaint()
     onPaletteIndexChanged: canvas.requestPaint()
