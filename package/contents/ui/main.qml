@@ -41,16 +41,21 @@ WallpaperItem {
     ]
 
     // -----------------------------------------------------------------------
-    // lightenColor: blend a hex colour towards white by `factor`
-    //   0.0 = no change   1.0 = pure white
-    //   Handles both #rrggbb and Qt's #aarrggbb (strips alpha prefix).
+    // FIX 1 — lightenColor
+    // Blend a hex colour towards white by `factor` (0.0=unchanged, 1.0=white).
+    // Handles #rrggbb and Qt's #aarrggbb (strips alpha prefix).
+    // ROBUSTNESS: if parseInt yields NaN (e.g. named CSS colour like "green")
+    //             the original colour string is returned unchanged.
     // -----------------------------------------------------------------------
     function lightenColor(hexColor, factor) {
-        var hex = hexColor.toString().replace(/^#/, "")
+        var src = hexColor.toString()
+        var hex = src.replace(/^#/, "")
         if (hex.length === 8) hex = hex.substring(2)   // strip Qt alpha prefix
         var r = parseInt(hex.substring(0, 2), 16)
         var g = parseInt(hex.substring(2, 4), 16)
         var b = parseInt(hex.substring(4, 6), 16)
+        // FIX 1: bail out if any channel failed to parse
+        if (isNaN(r) || isNaN(g) || isNaN(b)) return src
         r = Math.min(255, Math.round(r + (255 - r) * factor))
         g = Math.min(255, Math.round(g + (255 - g) * factor))
         b = Math.min(255, Math.round(b + (255 - b) * factor))
@@ -58,19 +63,27 @@ WallpaperItem {
     }
 
     // -----------------------------------------------------------------------
-    // colorJsonChars: push {ch, isValue} entries into `result` for every
-    // character of the JSON string `json`.
+    // FIX 2 — colorJsonChars
+    // Tag every character of a valid JSON string as key/structural or value.
+    // ROBUSTNESS:
+    //   - Returns immediately (no-op) if `json` is null, undefined or empty.
+    //   - The entire loop is wrapped in try/catch: if the state machine hits
+    //     an unexpected edge-case, the remaining characters are appended with
+    //     isValue=false (base colour) so `result` is always fully populated.
     //
     // States:
-    //   ST_STRUCT     - between tokens (structural chars, whitespace)
-    //   ST_IN_KEY     - inside a string that is an object key
-    //   ST_IN_VAL_STR - inside a string that is a value
-    //   ST_IN_VAL_NUM - inside a number / bool / null value
+    //   ST_STRUCT     between tokens
+    //   ST_IN_KEY     inside an object-key string
+    //   ST_IN_VAL_STR inside a value string
+    //   ST_IN_VAL_NUM inside a number / bool / null
     //
-    // isValue=false : keys, {,},[,],:,, and whitespace
-    // isValue=true  : value strings (incl. quotes), numbers, booleans, null
+    // isValue=false : keys, { } [ ] : , whitespace
+    // isValue=true  : value strings (quotes included), numbers, bool, null
     // -----------------------------------------------------------------------
     function colorJsonChars(json, result) {
+        // FIX 2a: guard against null / empty input
+        if (!json || json.length === 0) return
+
         var ST_STRUCT     = 0
         var ST_IN_KEY     = 1
         var ST_IN_VAL_STR = 2
@@ -80,90 +93,120 @@ WallpaperItem {
         var afterColon = false
         var arrayDepth = 0
         var escaped    = false
+        var i          = 0
 
-        for (var i = 0; i < json.length; i++) {
-            var ch = json.charAt(i)
+        // FIX 2b: catch any unexpected exception mid-parse
+        try {
+            for (; i < json.length; i++) {
+                var ch = json.charAt(i)
 
-            if (state === ST_STRUCT) {
-                if (ch === '"') {
-                    if (afterColon || arrayDepth > 0) {
-                        state = ST_IN_VAL_STR; afterColon = false; escaped = false
+                if (state === ST_STRUCT) {
+                    if (ch === '"') {
+                        if (afterColon || arrayDepth > 0) {
+                            state = ST_IN_VAL_STR; afterColon = false; escaped = false
+                            result.push({ ch: ch, isValue: true })
+                        } else {
+                            state = ST_IN_KEY; escaped = false
+                            result.push({ ch: ch, isValue: false })
+                        }
+                    } else if (ch === '[') {
+                        arrayDepth++; afterColon = false
+                        result.push({ ch: ch, isValue: false })
+                    } else if (ch === ']') {
+                        if (arrayDepth > 0) arrayDepth--
+                        result.push({ ch: ch, isValue: false })
+                    } else if (ch === '{' || ch === '}' || ch === ',') {
+                        afterColon = false
+                        result.push({ ch: ch, isValue: false })
+                    } else if (ch === ':') {
+                        afterColon = true
+                        result.push({ ch: ch, isValue: false })
+                    } else if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+                        result.push({ ch: ch, isValue: false })
+                    } else if (afterColon || arrayDepth > 0) {
+                        state = ST_IN_VAL_NUM; afterColon = false
                         result.push({ ch: ch, isValue: true })
                     } else {
-                        state = ST_IN_KEY; escaped = false
                         result.push({ ch: ch, isValue: false })
                     }
-                } else if (ch === '[') {
-                    arrayDepth++; afterColon = false
+
+                } else if (state === ST_IN_KEY) {
                     result.push({ ch: ch, isValue: false })
-                } else if (ch === ']') {
-                    if (arrayDepth > 0) arrayDepth--
-                    result.push({ ch: ch, isValue: false })
-                } else if (ch === '{' || ch === '}' || ch === ',') {
-                    afterColon = false
-                    result.push({ ch: ch, isValue: false })
-                } else if (ch === ':') {
-                    afterColon = true
-                    result.push({ ch: ch, isValue: false })
-                } else if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
-                    result.push({ ch: ch, isValue: false })
-                } else if (afterColon || arrayDepth > 0) {
-                    state = ST_IN_VAL_NUM; afterColon = false
+                    if (ch === '"' && !escaped) state = ST_STRUCT
+                    escaped = (ch === '\\' && !escaped)
+
+                } else if (state === ST_IN_VAL_STR) {
                     result.push({ ch: ch, isValue: true })
-                } else {
-                    result.push({ ch: ch, isValue: false })
-                }
+                    if (ch === '"' && !escaped) state = ST_STRUCT
+                    escaped = (ch === '\\' && !escaped)
 
-            } else if (state === ST_IN_KEY) {
-                result.push({ ch: ch, isValue: false })
-                if (ch === '"' && !escaped) state = ST_STRUCT
-                escaped = (ch === '\\' && !escaped)
-
-            } else if (state === ST_IN_VAL_STR) {
-                result.push({ ch: ch, isValue: true })
-                if (ch === '"' && !escaped) state = ST_STRUCT
-                escaped = (ch === '\\' && !escaped)
-
-            } else if (state === ST_IN_VAL_NUM) {
-                if (ch === ',' || ch === '}' || ch === ']') {
-                    state = ST_STRUCT; afterColon = false
-                    if (ch === ']' && arrayDepth > 0) arrayDepth--
-                    result.push({ ch: ch, isValue: false })
-                } else {
-                    result.push({ ch: ch, isValue: true })
+                } else if (state === ST_IN_VAL_NUM) {
+                    if (ch === ',' || ch === '}' || ch === ']') {
+                        state = ST_STRUCT; afterColon = false
+                        if (ch === ']' && arrayDepth > 0) arrayDepth--
+                        result.push({ ch: ch, isValue: false })
+                    } else {
+                        result.push({ ch: ch, isValue: true })
+                    }
                 }
             }
+        } catch(e) {
+            // FIX 2b: append any remaining characters as uncolored base
+            writeLog("colorJsonChars error at pos " + i + ": " + e)
+            for (var k = i; k < json.length; k++)
+                result.push({ ch: json.charAt(k), isValue: false })
         }
     }
 
     // -----------------------------------------------------------------------
-    // buildDisplayChars: build the [{ch, isValue}] array for the rain.
-    //   Format rendered: "<topic>: <payload>/"
-    //   - topic    -> all isValue=false
-    //   - ": "     -> isValue=false
-    //   - payload  -> colorJsonChars() if JSON object/array,
-    //                 all isValue=true for plain strings (e.g. "online")
-    //   - "/"      -> isValue=false  (loop separator)
+    // FIX 3 — buildDisplayChars
+    // Build the [{ch, isValue}] array: "<topic>: <payload>/"
+    // ROBUSTNESS:
+    //   - topic / payload normalised to safe strings at entry.
+    //   - 3-level fallback:
+    //       L1  JSON object/array  -> colorJsonChars()
+    //       L2  plain scalar       -> flat isValue=true loop
+    //       L3  outer try/catch    -> fully flat isValue=false chars
+    //     Each level is independent; a failure in L1 never corrupts L2/L3.
     // -----------------------------------------------------------------------
     function buildDisplayChars(topic, payload) {
+        // FIX 3a: normalise inputs — never let null/undefined reach charAt()
+        var t = (topic   != null && topic   !== undefined) ? topic.toString()   : ""
+        var p = (payload != null && payload !== undefined) ? payload.toString() : ""
+
         var result = []
 
-        for (var i = 0; i < topic.length; i++)
-            result.push({ ch: topic.charAt(i), isValue: false })
-        result.push({ ch: ':', isValue: false })
-        result.push({ ch: ' ', isValue: false })
+        // FIX 3b: outer catch-all — if anything below throws, return flat chars
+        try {
+            for (var i = 0; i < t.length; i++)
+                result.push({ ch: t.charAt(i), isValue: false })
+            result.push({ ch: ':', isValue: false })
+            result.push({ ch: ' ', isValue: false })
 
-        var parsed = null
-        try { parsed = JSON.parse(payload) } catch(e) {}
+            // FIX 3c: L1/L2 separation — JSON parse failure goes to L2, not L3
+            var parsed = null
+            try { parsed = JSON.parse(p) } catch(e) { /* non-JSON payload, use L2 */ }
 
-        if (parsed !== null && typeof parsed === "object") {
-            colorJsonChars(payload, result)
-        } else {
-            for (var j = 0; j < payload.length; j++)
-                result.push({ ch: payload.charAt(j), isValue: true })
+            if (parsed !== null && typeof parsed === "object") {
+                // L1: JSON object or array
+                colorJsonChars(p, result)
+            } else {
+                // L2: plain scalar (string, number, bool) or non-JSON
+                for (var j = 0; j < p.length; j++)
+                    result.push({ ch: p.charAt(j), isValue: true })
+            }
+
+            result.push({ ch: '/', isValue: false })
+
+        } catch(e) {
+            // L3: unexpected failure — rebuild as flat uncolored chars
+            writeLog("buildDisplayChars error: " + e)
+            result = []
+            var flat = t + ": " + p + "/"
+            for (var k = 0; k < flat.length; k++)
+                result.push({ ch: flat.charAt(k), isValue: false })
         }
 
-        result.push({ ch: '/', isValue: false })
         return result
     }
 
@@ -185,18 +228,25 @@ WallpaperItem {
             canvas.requestPaint()
         }
 
+        // FIX 5 — onMessageReceived
+        // Normalise topic and payload to strings before any processing.
+        // A null/undefined argument from a misbehaving broker can no longer
+        // propagate into buildDisplayChars or the history array.
         onMessageReceived: function(topic, payload) {
-            main.writeDebug("📨 [" + topic + "] " + payload)
+            var safeTopic   = (topic   != null && topic   !== undefined) ? topic.toString()   : ""
+            var safePayload = (payload != null && payload !== undefined) ? payload.toString() : ""
+
+            main.writeDebug("📨 [" + safeTopic + "] " + safePayload)
             main.messagesReceived++
 
-            // History: newest first, max 5
+            // History: newest first, max 5 — always store safe strings
             var hist = main.messageHistory.slice()
-            hist.unshift({ topic: topic, payload: payload })
+            hist.unshift({ topic: safeTopic, payload: safePayload })
             if (hist.length > main.maxHistory) hist = hist.slice(0, main.maxHistory)
             main.messageHistory = hist
 
-            // Build colour-tagged char array for the rain
-            main.messageChars = main.buildDisplayChars(topic, payload)
+            // Build colour-tagged char array — buildDisplayChars handles its own errors
+            main.messageChars = main.buildDisplayChars(safeTopic, safePayload)
 
             canvas.requestPaint()
         }
@@ -276,17 +326,27 @@ WallpaperItem {
                 if (hasMqttChars) {
                     var r   = Math.floor(drops[i])
                     var idx = (r + i) % msgLen
-                    var entry = main.messageChars[idx]   // {ch, isValue}
-                    ch = entry.ch
 
-                    if (isGlitch) {
-                        ctx.fillStyle = "#ffffff"
-                    } else if (entry.isValue) {
-                        // Value chars: blend 55% towards white for brightness
-                        ctx.fillStyle = main.lightenColor(baseColor, 0.55)
+                    // FIX 4: defensive entry check before accessing .ch / .isValue
+                    // messageChars could be partially replaced during a property
+                    // update between frames; an undefined entry must never crash.
+                    var entry = (idx >= 0 && idx < main.messageChars.length)
+                                ? main.messageChars[idx]
+                                : null
+
+                    if (!entry || typeof entry.ch !== "string" || entry.ch.length === 0) {
+                        // Fallback: random katakana in base colour (keeps animation alive)
+                        ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
+                        ctx.fillStyle = isGlitch ? "#ffffff" : baseColor
                     } else {
-                        // Key / structural chars: raw palette colour
-                        ctx.fillStyle = baseColor
+                        ch = entry.ch
+                        if (isGlitch) {
+                            ctx.fillStyle = "#ffffff"
+                        } else if (entry.isValue) {
+                            ctx.fillStyle = main.lightenColor(baseColor, 0.55)
+                        } else {
+                            ctx.fillStyle = baseColor
+                        }
                     }
                 } else {
                     ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
@@ -335,7 +395,9 @@ WallpaperItem {
                     ctx.fillText("(waiting for messages...)", TX, baseY)
                 } else {
                     for (var m = 0; m < hist.length; m++) {
-                        var line = hist[m].topic + ": " + hist[m].payload
+                        var entry2 = hist[m]
+                        if (!entry2) continue
+                        var line = (entry2.topic || "") + ": " + (entry2.payload || "")
                         if (line.length > 98) line = line.substring(0, 95) + "…"
                         ctx.fillStyle = alphas[m]
                         ctx.fillText(line, TX, baseY + m * LINE)
