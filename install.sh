@@ -13,38 +13,9 @@ BUILD_DIR="${PLUGIN_DIR}/build"
 QML_INSTALL_DIR="${HOME}/.local/lib/qt6/qml/ObsidianReq/MQTTRain"
 QML_BASE_DIR="${HOME}/.local/lib/qt6/qml"
 
-# ---------------------------------------------------------------------------
-# Helper: detect the user's shell rc file
-# ---------------------------------------------------------------------------
-detect_shell_rc() {
-    local shell_name
-    shell_name="$(basename "${SHELL:-/bin/bash}")"
-    case "${shell_name}" in
-        zsh)  echo "${HOME}/.zshrc" ;;
-        fish) echo "${HOME}/.config/fish/config.fish" ;;
-        ksh)  echo "${HOME}/.kshrc" ;;
-        *)    echo "${HOME}/.bashrc" ;;
-    esac
-}
-
-# ---------------------------------------------------------------------------
-# Helper: append QML2_IMPORT_PATH export to a shell rc file
-# ---------------------------------------------------------------------------
-append_env_to_rc() {
-    local rc_file="$1"
-    local shell_name
-    shell_name="$(basename "${SHELL:-/bin/bash}")"
-
-    if [[ "${shell_name}" == "fish" ]]; then
-        echo "" >> "${rc_file}"
-        echo "# Added by matrixrain-plasma6 install.sh" >> "${rc_file}"
-        echo "set -gx QML2_IMPORT_PATH ${QML_BASE_DIR} \$QML2_IMPORT_PATH" >> "${rc_file}"
-    else
-        echo "" >> "${rc_file}"
-        echo "# Added by matrixrain-plasma6 install.sh" >> "${rc_file}"
-        echo "export QML2_IMPORT_PATH=\"${QML_BASE_DIR}:\${QML2_IMPORT_PATH:-}\"" >> "${rc_file}"
-    fi
-}
+# systemd environment.d file for this plugin
+ENV_D_DIR="${HOME}/.config/environment.d"
+ENV_D_FILE="${ENV_D_DIR}/99-mqttrain-qt.conf"
 
 # ---------------------------------------------------------------------------
 # [1/6] Check required tools
@@ -116,76 +87,70 @@ echo "✅ Wallpaper package installed"
 echo ""
 
 # ---------------------------------------------------------------------------
-# [5/6] QML2_IMPORT_PATH check
+# [5/6] QML import path — systemd user environment
+#
+# plasmashell is launched by systemd --user and does NOT read ~/.bashrc or
+# ~/.zshrc. The correct way to set environment variables for systemd user
+# services is via ~/.config/environment.d/*.conf, which systemd reads before
+# starting any user service.
 # ---------------------------------------------------------------------------
-echo "[5/6] Checking QML2_IMPORT_PATH..."
+echo "[5/6] Configuring QML import path for systemd user services..."
 
-RC_FILE="$(detect_shell_rc)"
+mkdir -p "${ENV_D_DIR}"
 
-# Check 1: is QML_BASE_DIR already written in the rc file?
-RC_HAS_PATH=false
-if [[ -f "${RC_FILE}" ]] && grep -qF "${QML_BASE_DIR}" "${RC_FILE}" 2>/dev/null; then
-    RC_HAS_PATH=true
-fi
-
-# Check 2: is it active in the current session?
-SESSION_HAS_PATH=false
-if [[ ":${QML2_IMPORT_PATH:-}:" == *":${QML_BASE_DIR}:"* ]]; then
-    SESSION_HAS_PATH=true
-fi
-
-if [[ "${RC_HAS_PATH}" == true && "${SESSION_HAS_PATH}" == true ]]; then
-    # All good — nothing to do
-    echo "✅ QML2_IMPORT_PATH already configured (${RC_FILE} + current session)"
-
-elif [[ "${RC_HAS_PATH}" == true && "${SESSION_HAS_PATH}" == false ]]; then
-    # Written in rc but not active yet (fresh install, not relogged yet)
-    echo "✅ QML2_IMPORT_PATH already present in ${RC_FILE}"
-    echo "ℹ️  Setting it for the current session as well..."
-    export QML2_IMPORT_PATH="${QML_BASE_DIR}:${QML2_IMPORT_PATH:-}"
-    echo "✅ Set for current session: ${QML2_IMPORT_PATH}"
-    echo ""
-    echo "⚠️  Remember: a KDE session logout/relogin is needed for plasmashell"
-    echo "   to pick it up automatically on next boot."
-
+# Check if the path is already present in the environment.d file
+if [[ -f "${ENV_D_FILE}" ]] && grep -qF "${QML_BASE_DIR}" "${ENV_D_FILE}" 2>/dev/null; then
+    echo "✅ ${ENV_D_FILE} already contains ${QML_BASE_DIR} — nothing to do"
 else
-    # Not in rc file — ask the user
-    if [[ "${SESSION_HAS_PATH}" == false ]]; then
-        echo "⚠️  QML2_IMPORT_PATH does not contain ${QML_BASE_DIR}"
-    else
-        echo "⚠️  QML2_IMPORT_PATH is set in the current session but not in ${RC_FILE}"
-        echo "   (it would be lost on next login)"
-    fi
     echo ""
-    echo "ℹ️  The C++ QML plugin is installed in:"
-    echo "     ${QML_BASE_DIR}"
-    echo "   KDE Plasma (plasmashell) needs this path set before it starts."
+    echo "⚠️  The C++ QML plugin must be discoverable by plasmashell at startup."
+    echo "   plasmashell is started by systemd --user and does NOT read your shell"
+    echo "   rc files (∾zshrc, ∾bashrc, etc.), so the path must be declared in:"
+    echo "     ${ENV_D_FILE}"
     echo ""
-    echo "   The following line would be added to ${RC_FILE}:"
-    echo "     export QML2_IMPORT_PATH=\"${QML_BASE_DIR}:\${QML2_IMPORT_PATH:-}\""
+    echo "   The following lines would be written to that file:"
+    echo "     QML_IMPORT_PATH=${QML_BASE_DIR}:\${QML_IMPORT_PATH:+:\${QML_IMPORT_PATH}}"
+    echo "     QML2_IMPORT_PATH=${QML_BASE_DIR}:\${QML2_IMPORT_PATH:+:\${QML2_IMPORT_PATH}}"
     echo ""
-    read -r -p "   Add it automatically to ${RC_FILE}? [y/N] " REPLY
+    read -r -p "   Write ${ENV_D_FILE}? [y/N] " REPLY
     echo ""
 
     if [[ "${REPLY}" =~ ^[Yy]$ ]]; then
-        append_env_to_rc "${RC_FILE}"
-        echo "✅ Added QML2_IMPORT_PATH to ${RC_FILE}"
+        cat > "${ENV_D_FILE}" << EOF
+# Added by matrixrain-plasma6 install.sh
+# Expose user-installed Qt QML plugins to systemd user services (plasmashell).
+# QML_IMPORT_PATH is the current Qt 6 variable; QML2_IMPORT_PATH is kept for compatibility.
+QML_IMPORT_PATH=${QML_BASE_DIR}\${QML_IMPORT_PATH:+:\${QML_IMPORT_PATH}}
+QML2_IMPORT_PATH=${QML_BASE_DIR}\${QML2_IMPORT_PATH:+:\${QML2_IMPORT_PATH}}
+EOF
+        echo "✅ Written ${ENV_D_FILE}"
         echo ""
-        echo "⚠️  IMPORTANT: A KDE session logout/relogin (or reboot) is required"
-        echo "   for plasmashell to start with the new variable."
-        echo "   Running 'source ${RC_FILE}' in a terminal is NOT enough."
-    else
-        echo "ℹ️  Skipped. Add it manually:"
-        echo "     echo 'export QML2_IMPORT_PATH=\"${QML_BASE_DIR}:\${QML2_IMPORT_PATH:-}\"' >> ${RC_FILE}"
-    fi
 
-    # Always export for the current session regardless of user choice
-    export QML2_IMPORT_PATH="${QML_BASE_DIR}:${QML2_IMPORT_PATH:-}"
-    echo ""
-    echo "ℹ️  QML2_IMPORT_PATH set for the current shell session:"
-    echo "     ${QML2_IMPORT_PATH}"
-    echo "   You can test immediately with: plasmashell --replace &"
+        echo "ℹ️  Reloading systemd user manager..."
+        systemctl --user daemon-reexec 2>/dev/null && echo "✅ daemon-reexec done" || echo "⚠️  daemon-reexec failed (non-fatal)"
+        echo ""
+        echo "⚠️  IMPORTANT: You must log out and log back in (or reboot) so that"
+        echo "   plasmashell restarts with the updated environment."
+        echo "   Running 'source ~/.zshrc' in a terminal is NOT enough."
+    else
+        echo "ℹ️  Skipped. To fix manually:"
+        echo "   mkdir -p ${ENV_D_DIR}"
+        echo "   cat >> ${ENV_D_FILE} << 'EOF'"
+        echo "   QML_IMPORT_PATH=${QML_BASE_DIR}\${QML_IMPORT_PATH:+:\${QML_IMPORT_PATH}}"
+        echo "   QML2_IMPORT_PATH=${QML_BASE_DIR}\${QML2_IMPORT_PATH:+:\${QML2_IMPORT_PATH}}"
+        echo "   EOF"
+        echo "   systemctl --user daemon-reexec"
+    fi
 fi
+
+# Always export both variables for the current shell session so you can test
+# immediately without logging out (e.g. plasmashell --replace &)
+export QML_IMPORT_PATH="${QML_BASE_DIR}:${QML_IMPORT_PATH:-}"
+export QML2_IMPORT_PATH="${QML_BASE_DIR}:${QML2_IMPORT_PATH:-}"
+echo ""
+echo "ℹ️  Set for the CURRENT shell session:"
+echo "   QML_IMPORT_PATH=${QML_IMPORT_PATH}"
+echo "   You can test immediately with: plasmashell --replace &"
 
 echo ""
 
