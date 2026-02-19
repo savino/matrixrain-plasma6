@@ -25,11 +25,15 @@ WallpaperItem {
     property bool mqttDebug: main.configuration.mqttDebug !== undefined ? main.configuration.mqttDebug : false
 
     // State
-    // messageChars: [{ch: string, isValue: bool}, ...]
-    //   isValue=false -> base palette color  (JSON keys, structural chars)
-    //   isValue=true  -> lightened color     (JSON values, plain payloads)
-    property var messageChars: []
-    property var messageHistory: []
+    //
+    // messageHistory:     [{topic, payload}, ...]  newest first, max maxHistory
+    // messageHistoryChars: [[{ch,isValue},...], ...]  parallel array of tagged
+    //                      char arrays, one per history slot.
+    //
+    // Paint rule: column i  ->  slot = i % messageHistoryChars.length
+    //             char idx  ->  (floor(drops[i]) + i) % slotChars.length
+    property var messageHistory:      []
+    property var messageHistoryChars: []   // [[{ch,isValue}], ...]
     readonly property int maxHistory: 5
     property bool debugOverlay: main.configuration.debugOverlay !== undefined ? main.configuration.debugOverlay : false
     property int messagesReceived: 0
@@ -41,20 +45,16 @@ WallpaperItem {
     ]
 
     // -----------------------------------------------------------------------
-    // FIX 1 — lightenColor
-    // Blend a hex colour towards white by `factor` (0.0=unchanged, 1.0=white).
-    // Handles #rrggbb and Qt's #aarrggbb (strips alpha prefix).
-    // ROBUSTNESS: if parseInt yields NaN (e.g. named CSS colour like "green")
-    //             the original colour string is returned unchanged.
+    // lightenColor: blend a hex colour towards white by `factor`
+    // Handles #rrggbb and Qt's #aarrggbb. Returns original on parse failure.
     // -----------------------------------------------------------------------
     function lightenColor(hexColor, factor) {
         var src = hexColor.toString()
         var hex = src.replace(/^#/, "")
-        if (hex.length === 8) hex = hex.substring(2)   // strip Qt alpha prefix
+        if (hex.length === 8) hex = hex.substring(2)
         var r = parseInt(hex.substring(0, 2), 16)
         var g = parseInt(hex.substring(2, 4), 16)
         var b = parseInt(hex.substring(4, 6), 16)
-        // FIX 1: bail out if any channel failed to parse
         if (isNaN(r) || isNaN(g) || isNaN(b)) return src
         r = Math.min(255, Math.round(r + (255 - r) * factor))
         g = Math.min(255, Math.round(g + (255 - g) * factor))
@@ -63,25 +63,11 @@ WallpaperItem {
     }
 
     // -----------------------------------------------------------------------
-    // FIX 2 — colorJsonChars
-    // Tag every character of a valid JSON string as key/structural or value.
-    // ROBUSTNESS:
-    //   - Returns immediately (no-op) if `json` is null, undefined or empty.
-    //   - The entire loop is wrapped in try/catch: if the state machine hits
-    //     an unexpected edge-case, the remaining characters are appended with
-    //     isValue=false (base colour) so `result` is always fully populated.
-    //
-    // States:
-    //   ST_STRUCT     between tokens
-    //   ST_IN_KEY     inside an object-key string
-    //   ST_IN_VAL_STR inside a value string
-    //   ST_IN_VAL_NUM inside a number / bool / null
-    //
-    // isValue=false : keys, { } [ ] : , whitespace
-    // isValue=true  : value strings (quotes included), numbers, bool, null
+    // colorJsonChars: tag each char of a valid JSON string as key/value.
+    // isValue=false : keys, structural chars, whitespace
+    // isValue=true  : value strings (quotes incl.), numbers, bool, null
     // -----------------------------------------------------------------------
     function colorJsonChars(json, result) {
-        // FIX 2a: guard against null / empty input
         if (!json || json.length === 0) return
 
         var ST_STRUCT     = 0
@@ -89,17 +75,11 @@ WallpaperItem {
         var ST_IN_VAL_STR = 2
         var ST_IN_VAL_NUM = 3
 
-        var state      = ST_STRUCT
-        var afterColon = false
-        var arrayDepth = 0
-        var escaped    = false
-        var i          = 0
-
-        // FIX 2b: catch any unexpected exception mid-parse
+        var state = ST_STRUCT, afterColon = false, arrayDepth = 0, escaped = false
+        var i = 0
         try {
             for (; i < json.length; i++) {
                 var ch = json.charAt(i)
-
                 if (state === ST_STRUCT) {
                     if (ch === '"') {
                         if (afterColon || arrayDepth > 0) {
@@ -110,36 +90,28 @@ WallpaperItem {
                             result.push({ ch: ch, isValue: false })
                         }
                     } else if (ch === '[') {
-                        arrayDepth++; afterColon = false
-                        result.push({ ch: ch, isValue: false })
+                        arrayDepth++; afterColon = false; result.push({ ch: ch, isValue: false })
                     } else if (ch === ']') {
-                        if (arrayDepth > 0) arrayDepth--
-                        result.push({ ch: ch, isValue: false })
+                        if (arrayDepth > 0) arrayDepth--; result.push({ ch: ch, isValue: false })
                     } else if (ch === '{' || ch === '}' || ch === ',') {
-                        afterColon = false
-                        result.push({ ch: ch, isValue: false })
+                        afterColon = false; result.push({ ch: ch, isValue: false })
                     } else if (ch === ':') {
-                        afterColon = true
-                        result.push({ ch: ch, isValue: false })
+                        afterColon = true; result.push({ ch: ch, isValue: false })
                     } else if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
                         result.push({ ch: ch, isValue: false })
                     } else if (afterColon || arrayDepth > 0) {
-                        state = ST_IN_VAL_NUM; afterColon = false
-                        result.push({ ch: ch, isValue: true })
+                        state = ST_IN_VAL_NUM; afterColon = false; result.push({ ch: ch, isValue: true })
                     } else {
                         result.push({ ch: ch, isValue: false })
                     }
-
                 } else if (state === ST_IN_KEY) {
                     result.push({ ch: ch, isValue: false })
                     if (ch === '"' && !escaped) state = ST_STRUCT
                     escaped = (ch === '\\' && !escaped)
-
                 } else if (state === ST_IN_VAL_STR) {
                     result.push({ ch: ch, isValue: true })
                     if (ch === '"' && !escaped) state = ST_STRUCT
                     escaped = (ch === '\\' && !escaped)
-
                 } else if (state === ST_IN_VAL_NUM) {
                     if (ch === ',' || ch === '}' || ch === ']') {
                         state = ST_STRUCT; afterColon = false
@@ -151,7 +123,6 @@ WallpaperItem {
                 }
             }
         } catch(e) {
-            // FIX 2b: append any remaining characters as uncolored base
             writeLog("colorJsonChars error at pos " + i + ": " + e)
             for (var k = i; k < json.length; k++)
                 result.push({ ch: json.charAt(k), isValue: false })
@@ -159,55 +130,49 @@ WallpaperItem {
     }
 
     // -----------------------------------------------------------------------
-    // FIX 3 — buildDisplayChars
-    // Build the [{ch, isValue}] array: "<topic>: <payload>/"
-    // ROBUSTNESS:
-    //   - topic / payload normalised to safe strings at entry.
-    //   - 3-level fallback:
-    //       L1  JSON object/array  -> colorJsonChars()
-    //       L2  plain scalar       -> flat isValue=true loop
-    //       L3  outer try/catch    -> fully flat isValue=false chars
-    //     Each level is independent; a failure in L1 never corrupts L2/L3.
+    // buildDisplayChars: [{ch,isValue}] for "<topic>: <payload>/"
+    // 3-level fallback: JSON -> plain string -> flat uncolored catch-all
     // -----------------------------------------------------------------------
     function buildDisplayChars(topic, payload) {
-        // FIX 3a: normalise inputs — never let null/undefined reach charAt()
         var t = (topic   != null && topic   !== undefined) ? topic.toString()   : ""
         var p = (payload != null && payload !== undefined) ? payload.toString() : ""
-
         var result = []
-
-        // FIX 3b: outer catch-all — if anything below throws, return flat chars
         try {
             for (var i = 0; i < t.length; i++)
                 result.push({ ch: t.charAt(i), isValue: false })
             result.push({ ch: ':', isValue: false })
             result.push({ ch: ' ', isValue: false })
-
-            // FIX 3c: L1/L2 separation — JSON parse failure goes to L2, not L3
             var parsed = null
-            try { parsed = JSON.parse(p) } catch(e) { /* non-JSON payload, use L2 */ }
-
+            try { parsed = JSON.parse(p) } catch(e) {}
             if (parsed !== null && typeof parsed === "object") {
-                // L1: JSON object or array
                 colorJsonChars(p, result)
             } else {
-                // L2: plain scalar (string, number, bool) or non-JSON
                 for (var j = 0; j < p.length; j++)
                     result.push({ ch: p.charAt(j), isValue: true })
             }
-
             result.push({ ch: '/', isValue: false })
-
         } catch(e) {
-            // L3: unexpected failure — rebuild as flat uncolored chars
             writeLog("buildDisplayChars error: " + e)
             result = []
             var flat = t + ": " + p + "/"
             for (var k = 0; k < flat.length; k++)
                 result.push({ ch: flat.charAt(k), isValue: false })
         }
-
         return result
+    }
+
+    // -----------------------------------------------------------------------
+    // rebuildHistoryChars: rebuild the full messageHistoryChars array from
+    // the current messageHistory. Called every time history changes.
+    // -----------------------------------------------------------------------
+    function rebuildHistoryChars() {
+        var chars = []
+        for (var s = 0; s < main.messageHistory.length; s++) {
+            var e = main.messageHistory[s]
+            if (e && e.topic !== undefined)
+                chars.push(main.buildDisplayChars(e.topic, e.payload))
+        }
+        main.messageHistoryChars = chars
     }
 
     // -----------------------------------------------------------------------
@@ -228,10 +193,6 @@ WallpaperItem {
             canvas.requestPaint()
         }
 
-        // FIX 5 — onMessageReceived
-        // Normalise topic and payload to strings before any processing.
-        // A null/undefined argument from a misbehaving broker can no longer
-        // propagate into buildDisplayChars or the history array.
         onMessageReceived: function(topic, payload) {
             var safeTopic   = (topic   != null && topic   !== undefined) ? topic.toString()   : ""
             var safePayload = (payload != null && payload !== undefined) ? payload.toString() : ""
@@ -239,14 +200,14 @@ WallpaperItem {
             main.writeDebug("📨 [" + safeTopic + "] " + safePayload)
             main.messagesReceived++
 
-            // History: newest first, max 5 — always store safe strings
+            // Update history (newest first, max maxHistory)
             var hist = main.messageHistory.slice()
             hist.unshift({ topic: safeTopic, payload: safePayload })
             if (hist.length > main.maxHistory) hist = hist.slice(0, main.maxHistory)
             main.messageHistory = hist
 
-            // Build colour-tagged char array — buildDisplayChars handles its own errors
-            main.messageChars = main.buildDisplayChars(safeTopic, safePayload)
+            // Rebuild all slot char arrays to match the new history
+            main.rebuildHistoryChars()
 
             canvas.requestPaint()
         }
@@ -256,15 +217,13 @@ WallpaperItem {
 
     function mqttConnect() {
         if (!main.mqttEnable) { mqttClient.disconnectFromHost(); return }
-        var host  = main.mqttHost.trim()
-        var topic = main.mqttTopic.trim()
-        var user  = main.mqttUsername.trim()
-        main.writeLog("Connecting to " + host + ":" + main.mqttPort + " topic=[" + topic + "]")
-        mqttClient.host     = host
+        main.writeLog("Connecting to " + main.mqttHost + ":" + main.mqttPort
+                      + " topic=[" + main.mqttTopic + "]")
+        mqttClient.host     = main.mqttHost.trim()
         mqttClient.port     = main.mqttPort
-        mqttClient.username = user
+        mqttClient.username = main.mqttUsername.trim()
         mqttClient.password = main.mqttPassword
-        mqttClient.topic    = topic
+        mqttClient.topic    = main.mqttTopic.trim()
         mqttClient.connectToHost()
     }
 
@@ -305,16 +264,14 @@ WallpaperItem {
             ctx.fillStyle = "rgba(0,0,0,0.05)"
             ctx.fillRect(0, 0, w, h)
 
-            var hasMqttChars = main.mqttEnable
-                               && main.messageChars
-                               && main.messageChars.length > 0
-            var msgLen = hasMqttChars ? main.messageChars.length : 0
+            var histChars   = main.messageHistoryChars   // [[{ch,isValue}],...]
+            var nSlots      = (main.mqttEnable && histChars && histChars.length > 0)
+                              ? histChars.length : 0
 
             for (var i = 0; i < drops.length; i++) {
                 var x = i * main.fontSize
                 var y = drops[i] * main.fontSize
 
-                // Base colour as string so lightenColor() can parse it
                 var baseColor = (main.colorMode === 0)
                     ? main.singleColor.toString()
                     : main.palettes[main.paletteIndex][i % main.palettes[main.paletteIndex].length]
@@ -323,32 +280,42 @@ WallpaperItem {
                 ctx.font = main.fontSize + "px monospace"
 
                 var ch
-                if (hasMqttChars) {
-                    var r   = Math.floor(drops[i])
-                    var idx = (r + i) % msgLen
+                if (nSlots > 0) {
+                    // Each column is assigned to a history slot by interleaving:
+                    // col 0 -> slot 0 (newest), col 1 -> slot 1, ...
+                    // col nSlots -> slot 0 again, and so on.
+                    var slot      = i % nSlots
+                    var slotChars = histChars[slot]
+                    var slotLen   = (slotChars && slotChars.length > 0) ? slotChars.length : 0
 
-                    // FIX 4: defensive entry check before accessing .ch / .isValue
-                    // messageChars could be partially replaced during a property
-                    // update between frames; an undefined entry must never crash.
-                    var entry = (idx >= 0 && idx < main.messageChars.length)
-                                ? main.messageChars[idx]
-                                : null
+                    if (slotLen > 0) {
+                        var r   = Math.floor(drops[i])
+                        var idx = (r + i) % slotLen
 
-                    if (!entry || typeof entry.ch !== "string" || entry.ch.length === 0) {
-                        // Fallback: random katakana in base colour (keeps animation alive)
+                        // Defensive entry check (FIX 4)
+                        var entry = (idx >= 0 && idx < slotChars.length)
+                                    ? slotChars[idx] : null
+
+                        if (!entry || typeof entry.ch !== "string" || entry.ch.length === 0) {
+                            ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
+                            ctx.fillStyle = isGlitch ? "#ffffff" : baseColor
+                        } else {
+                            ch = entry.ch
+                            if (isGlitch) {
+                                ctx.fillStyle = "#ffffff"
+                            } else if (entry.isValue) {
+                                ctx.fillStyle = main.lightenColor(baseColor, 0.55)
+                            } else {
+                                ctx.fillStyle = baseColor
+                            }
+                        }
+                    } else {
+                        // Slot exists but is empty: random katakana
                         ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
                         ctx.fillStyle = isGlitch ? "#ffffff" : baseColor
-                    } else {
-                        ch = entry.ch
-                        if (isGlitch) {
-                            ctx.fillStyle = "#ffffff"
-                        } else if (entry.isValue) {
-                            ctx.fillStyle = main.lightenColor(baseColor, 0.55)
-                        } else {
-                            ctx.fillStyle = baseColor
-                        }
                     }
                 } else {
+                    // No history yet: random katakana
                     ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
                     ctx.fillStyle = isGlitch ? "#ffffff" : baseColor
                 }
@@ -378,8 +345,16 @@ WallpaperItem {
                 ctx.fillStyle = "#00ccff"
                 ctx.fillText("Broker: " + main.mqttHost + ":" + main.mqttPort, TX, 62)
                 ctx.fillText("Topic:  " + main.mqttTopic, TX, 78)
+
+                // Total chars across all active slots
+                var totalChars = 0
+                for (var s = 0; s < main.messageHistoryChars.length; s++)
+                    if (main.messageHistoryChars[s]) totalChars += main.messageHistoryChars[s].length
+
                 ctx.fillStyle = "#aaaaaa"
-                ctx.fillText("Msgs:   " + main.messagesReceived + "  |  Chars in rain: " + main.messageChars.length, TX, 94)
+                ctx.fillText("Msgs:   " + main.messagesReceived
+                             + "  |  Slots: " + main.messageHistoryChars.length
+                             + "  |  Chars: " + totalChars, TX, 94)
 
                 ctx.fillStyle = "#555555"
                 ctx.fillRect(TX, 103, BOX_W - 20, 1)
@@ -395,9 +370,9 @@ WallpaperItem {
                     ctx.fillText("(waiting for messages...)", TX, baseY)
                 } else {
                     for (var m = 0; m < hist.length; m++) {
-                        var entry2 = hist[m]
-                        if (!entry2) continue
-                        var line = (entry2.topic || "") + ": " + (entry2.payload || "")
+                        var hEntry = hist[m]
+                        if (!hEntry) continue
+                        var line = (hEntry.topic || "") + ": " + (hEntry.payload || "")
                         if (line.length > 98) line = line.substring(0, 95) + "…"
                         ctx.fillStyle = alphas[m]
                         ctx.fillText(line, TX, baseY + m * LINE)
@@ -425,7 +400,8 @@ WallpaperItem {
 
     Component.onCompleted: {
         main.writeLog("=== Matrix Rain MQTT Wallpaper ===")
-        main.writeLog("MQTT host=[" + main.mqttHost + "] port=" + main.mqttPort + " topic=[" + main.mqttTopic + "]")
+        main.writeLog("MQTT host=[" + main.mqttHost + "] port=" + main.mqttPort
+                      + " topic=[" + main.mqttTopic + "]")
         canvas.initDrops()
         if (main.mqttEnable) Qt.callLater(mqttConnect)
         else main.writeLog("MQTT disabled — random Matrix characters")
