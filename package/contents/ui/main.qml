@@ -26,8 +26,9 @@ WallpaperItem {
 
     // State
     property var messageChars: []
-    property string lastTopic: ""
-    property string lastPayload: ""
+    // History of last 5 messages for the debug overlay: [{topic, payload}, ...] newest first
+    property var messageHistory: []
+    readonly property int maxHistory: 5
     property bool debugOverlay: main.configuration.debugOverlay !== undefined ? main.configuration.debugOverlay : false
     property int messagesReceived: 0
 
@@ -61,12 +62,16 @@ WallpaperItem {
 
         onMessageReceived: function(topic, payload) {
             main.writeDebug("📨 [" + topic + "] " + payload)
-            main.lastTopic   = topic
-            main.lastPayload = payload
             main.messagesReceived++
 
-            // Build the display string: "topic: payload/"
-            // The trailing '/' acts as a visible separator when the string loops
+            // Push new message to the front of the history, keep max 5
+            var hist = main.messageHistory.slice()
+            hist.unshift({ topic: topic, payload: payload })
+            if (hist.length > main.maxHistory)
+                hist = hist.slice(0, main.maxHistory)
+            main.messageHistory = hist
+
+            // Build the display string for the rain: "topic: payload/"
             var display = topic + ": " + payload + "/"
             var chars = []
             for (var i = 0; i < display.length; i++)
@@ -164,29 +169,78 @@ WallpaperItem {
 
                 ctx.fillText(ch, x, y)
 
-                // Advance drop; wrap back to top when off screen
                 drops[i] += 1 + Math.random() * main.jitter / 100
                 if (drops[i] * main.fontSize > h + main.fontSize)
                     drops[i] = 0
             }
 
+            // ----------------------------------------------------------------
             // Debug overlay
+            // Layout (y positions):
+            //   26  — title
+            //   46  — MQTT status
+            //   62  — broker
+            //   78  — topic
+            //   94  — msgs count
+            //  112  — "Recent messages:" label
+            //  128…208 — 5 message lines (16px apart)
+            // ----------------------------------------------------------------
             if (main.debugOverlay) {
-                ctx.fillStyle = "rgba(0,0,0,0.85)"
-                ctx.fillRect(8, 8, 480, 130)
+                var BOX_X = 8
+                var BOX_Y = 8
+                var BOX_W = 760
+                var BOX_H = 222
+                var TX    = 14   // text left margin
+                var LINE  = 16   // line height for message rows
+
+                ctx.fillStyle = "rgba(0,0,0,0.88)"
+                ctx.fillRect(BOX_X, BOX_Y, BOX_W, BOX_H)
+
+                // Title
                 ctx.font = "bold 13px monospace"
                 ctx.fillStyle = "#00ff00"
-                ctx.fillText("⚙️ MQTT Rain Debug", 14, 26)
+                ctx.fillText("⚙️ MQTT Rain Debug", TX, 26)
+
                 ctx.font = "12px monospace"
+
+                // MQTT status
                 ctx.fillStyle = mqttClient.connected ? "#00ff00" : "#ff4444"
-                ctx.fillText("MQTT: " + (mqttClient.connected ? "✅ CONNECTED" : "❌ DISCONNECTED"), 14, 46)
+                ctx.fillText("MQTT:   " + (mqttClient.connected ? "✅ CONNECTED" : "❌ DISCONNECTED"), TX, 46)
+
+                // Broker / topic
                 ctx.fillStyle = "#00ccff"
-                ctx.fillText("Broker: " + main.mqttHost + ":" + main.mqttPort, 14, 62)
-                ctx.fillText("Topic:  [" + main.mqttTopic + "]", 14, 78)
-                ctx.fillStyle = "#ffff00"
-                var last = (main.lastPayload || "(waiting...)").toString()
-                ctx.fillText("Last:   " + (last.length > 52 ? last.substring(0, 49) + "..." : last), 14, 94)
-                ctx.fillText("Msgs: " + main.messagesReceived + "  |  Chars: " + main.messageChars.length, 14, 110)
+                ctx.fillText("Broker: " + main.mqttHost + ":" + main.mqttPort, TX, 62)
+                ctx.fillText("Topic:  " + main.mqttTopic, TX, 78)
+
+                // Message count
+                ctx.fillStyle = "#aaaaaa"
+                ctx.fillText("Msgs:   " + main.messagesReceived + "  |  Chars in rain: " + main.messageChars.length, TX, 94)
+
+                // Separator label
+                ctx.fillStyle = "#555555"
+                ctx.fillRect(TX, 103, BOX_W - 20, 1)
+                ctx.fillStyle = "#888888"
+                ctx.fillText("Recent messages (newest first):", TX, 116)
+
+                // Last 5 messages — newest is brightest, older ones dimmer
+                var alphas = ["#ffff00", "#cccc00", "#999900", "#666600", "#444400"]
+                var hist = main.messageHistory
+                var baseY = 132
+
+                if (hist.length === 0) {
+                    ctx.fillStyle = "#555555"
+                    ctx.fillText("(waiting for messages...)", TX, baseY)
+                } else {
+                    for (var m = 0; m < hist.length; m++) {
+                        var entry = hist[m]
+                        var line  = entry.topic + ": " + entry.payload
+                        // Truncate to fit the box (~100 chars at 12px monospace in 760px)
+                        if (line.length > 98)
+                            line = line.substring(0, 95) + "…"
+                        ctx.fillStyle = alphas[m]
+                        ctx.fillText(line, TX, baseY + m * LINE)
+                    }
+                }
             }
         }
 
