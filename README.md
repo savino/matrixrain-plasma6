@@ -1,6 +1,6 @@
 # Matrix Rain MQTT Wallpaper for KDE Plasma 6
 
-An MQTT-enabled "code rainfall" background wallpaper for Plasma 6 that displays incoming MQTT messages as falling Matrix-style characters. Perfect for visualizing IoT data, home automation events, or any MQTT stream in real-time on your desktop.
+An MQTT-enabled "code rainfall" background wallpaper for Plasma 6 that displays incoming MQTT messages as falling Matrix-style characters with **JSON syntax highlighting** and **per-message stream rendering**. Perfect for visualizing IoT data, home automation events, or any MQTT stream in real-time on your desktop.
 
 ![screenshot.png](screenshot.png)
 
@@ -10,17 +10,22 @@ An MQTT-enabled "code rainfall" background wallpaper for Plasma 6 that displays 
 - **Adjustable font size** - Scale characters from 8px to 48px
 - **Color modes** - Single color or multi-color with 3 pre-defined palettes (Neon, Cyberpunk, Synthwave)
 - **Customizable speed** - Control the drop speed from slow to fast
+- **Fade strength** - Adjust trail length (0.01–0.20, independent of speed)
 - **Jitter effect** - Add randomness to character movement
 - **Glitch chance** - Random bright white characters for that authentic Matrix feel
+- **JSON syntax highlighting** - Automatically highlights JSON values brighter than keys/structure
+- **Multi-stream rendering** - Each MQTT message gets its own set of interleaved columns (up to 5 messages visible simultaneously)
 
 ### MQTT Integration
 - **Native MQTT protocol** - Direct TCP connection using Qt6 Mqtt module
 - **Live message display** - Incoming MQTT messages appear as falling characters
+- **Message history** - Last 5 messages rendered as separate interleaved streams
 - **Flexible configuration** - Set custom host, port, topic, and credentials
 - **Auto-reconnection** - Automatically reconnects on connection loss
-- **Debug overlay** - Optional on-screen debugging information
+- **Debug overlay** - Optional on-screen debugging with last 5 messages, connection status, slot/char counts
 - **High performance** - C++ plugin with Qt6 integration
 - **Full MQTT spec compliance** - QoS levels, authentication, wildcard topics
+- **Robust parsing** - Handles malformed JSON, null payloads, race conditions gracefully
 
 ## Installation
 
@@ -57,77 +62,89 @@ The script will:
 2. Build the C++ MQTT plugin
 3. Install the plugin to `~/.local/lib/qt6/qml/`
 4. Install the wallpaper package
-5. **Check and configure `QML2_IMPORT_PATH`** (see below)
+5. **Configure systemd user environment** for QML plugin discovery (see below)
 
 ---
 
-## ⚠️ Critical: QML2_IMPORT_PATH
+## ⚠️ Critical: QML Plugin Path (systemd environment.d)
 
-This wallpaper uses a **native C++ QML plugin** (`libmqttrainplugin.so`) installed in a
-non-standard path (`~/.local/lib/qt6/qml/`). KDE Plasma's `plasmashell` must be told
-where to look for it via the `QML2_IMPORT_PATH` environment variable.
+This wallpaper uses a **native C++ QML plugin** (`libmqttrainplugin.so`) installed in
+`~/.local/lib/qt6/qml/`. KDE Plasma's `plasmashell` is launched by **systemd --user**
+and does NOT read shell rc files like `~/.bashrc` or `~/.zshrc`.
 
-**Without this variable set before `plasmashell` starts, the wallpaper will fail with:**
-```
-module "ObsidianReq.MQTTRain" is not installed
-```
+The plugin path must be declared in **`~/.config/environment.d/99-mqttrain-qt.conf`**
+so systemd loads it before starting any user service.
 
-### Why it's needed
+### What the install script does
 
-Qt's QML engine searches for plugins only in its built-in paths by default.
-User-installed plugins under `~/.local/` are not included unless explicitly declared.
-`QML2_IMPORT_PATH` extends this search path at runtime.
-
-### Setting it permanently
-
-The `install.sh` script will detect if the variable is missing or incomplete and offer
-to add it automatically to your shell config. If you prefer to do it manually:
-
-**bash / zsh:**
+The script creates:
 ```bash
-echo 'export QML2_IMPORT_PATH="$HOME/.local/lib/qt6/qml:${QML2_IMPORT_PATH:-}"' >> ~/.bashrc
-# or for zsh:
-echo 'export QML2_IMPORT_PATH="$HOME/.local/lib/qt6/qml:${QML2_IMPORT_PATH:-}"' >> ~/.zshrc
+~/.config/environment.d/99-mqttrain-qt.conf
+```
+with content:
+```bash
+QML_IMPORT_PATH=/home/user/.local/lib/qt6/qml${QML_IMPORT_PATH:+:${QML_IMPORT_PATH}}
+QML2_IMPORT_PATH=/home/user/.local/lib/qt6/qml${QML2_IMPORT_PATH:+:${QML2_IMPORT_PATH}}
 ```
 
-**fish:**
-```fish
-echo 'set -gx QML2_IMPORT_PATH $HOME/.local/lib/qt6/qml $QML2_IMPORT_PATH' >> ~/.config/fish/config.fish
-```
+Then runs `systemctl --user daemon-reexec` to reload the systemd user manager.
 
-### Why a logout/relogin is required
+### Why you must log out/reboot
 
-`plasmashell` is launched by the **KDE session manager** (`startplasma-wayland` /
-`startplasma-x11`) before any shell rc file (`.bashrc`, `.zshrc`) is sourced.
-Simply running `source ~/.bashrc` in a terminal is **not enough**.
+`plasmashell` inherits its environment from the systemd user session, which is created
+at login time. After the environment.d file is written, you must:
 
-After adding the variable you must either:
-- **Log out and log back in** to your KDE session, or
+- **Log out and log back in**, or
 - **Reboot**
 
-For an immediate test in the current session without rebooting:
+Running `source ~/.bashrc` in a terminal is **NOT sufficient** — the change must
+propagate to systemd itself.
+
+### Testing immediately without logout
+
+To test the wallpaper in the current session before logging out:
 ```bash
+export QML_IMPORT_PATH="$HOME/.local/lib/qt6/qml:${QML_IMPORT_PATH:-}"
 export QML2_IMPORT_PATH="$HOME/.local/lib/qt6/qml:${QML2_IMPORT_PATH:-}"
 plasmashell --replace &
 ```
 
-### KDE Plasma environment file (alternative)
+### Troubleshooting: "module not installed"
 
-For a more robust solution that survives shell changes, you can also add the variable
-to KDE's own environment file — this is sourced by the session manager directly:
-```bash
-mkdir -p ~/.config/plasma-workspace/env
-cat >> ~/.config/plasma-workspace/env/qml2importpath.sh << 'EOF'
-export QML2_IMPORT_PATH="$HOME/.local/lib/qt6/qml:${QML2_IMPORT_PATH:-}"
-EOF
-chmod +x ~/.config/plasma-workspace/env/qml2importpath.sh
+If you see:
 ```
-This approach works regardless of which shell you use and does not require editing
-`.bashrc` or `.zshrc`.
+module "ObsidianReq.MQTTRain" is not installed
+```
+
+1. Check the environment.d file exists:
+   ```bash
+   cat ~/.config/environment.d/99-mqttrain-qt.conf
+   ```
+2. Verify plugin files:
+   ```bash
+   ls ~/.local/lib/qt6/qml/ObsidianReq/MQTTRain/
+   ```
+3. **Log out and log back in** (or reboot)
+4. Check systemd picked up the variable:
+   ```bash
+   systemctl --user show-environment | grep QML
+   ```
 
 ---
 
 ## Configuration
+
+### Visual Settings
+
+1. **Font Size** - Character size in pixels (8–48)
+2. **Speed** - Drop speed in fps (1–100)
+3. **Fade Strength** - Trail fade alpha per frame (0.01–0.20, default 0.05)
+   - Lower = longer trails
+   - Higher = shorter, snappier trails
+4. **Color Mode** - Single color or multi-color palette
+5. **Palette** - Neon / Cyberpunk / Synthwave (multi-color mode only)
+6. **Jitter (%)** - Random horizontal drift (0–100)
+7. **Glitch Chance (%)** - White flash probability per character (0–100)
 
 ### MQTT Settings
 
@@ -136,7 +153,7 @@ This approach works regardless of which shell you use and does not require editi
 3. **MQTT Port** - MQTT TCP port (default: `1883`)
 4. **MQTT Topic** - Topic to subscribe to (supports wildcards like `zigbee2mqtt/#`)
 5. **Username/Password** - Optional authentication credentials
-6. **Debug Overlay** - Show connection status and last message on screen
+6. **Debug Overlay** - Show connection status, message history, slot/char counts on screen
 7. **Debug MQTT logging** - Print full MQTT messages to the system journal (off by default)
 
 ### Example Configurations
@@ -166,9 +183,9 @@ Topic: test/#
 
 ### Example Use Cases
 
-- **Home Automation**: Subscribe to `zigbee2mqtt/#` or `homeassistant/#` to see all your smart home events
-- **IoT Monitoring**: Display sensor data from connected devices in real-time
-- **Development**: Debug MQTT applications visually
+- **Home Automation**: Subscribe to `zigbee2mqtt/#` or `homeassistant/#` to see all your smart home events with JSON values highlighted
+- **IoT Monitoring**: Display sensor data from connected devices in real-time with color-coded payloads
+- **Development**: Debug MQTT applications visually with syntax-highlighted JSON
 - **Art Installation**: Create dynamic visual displays from live data streams
 - **System Monitoring**: Publish system stats to MQTT and visualize them
 
@@ -183,12 +200,27 @@ The wallpaper consists of two components:
    - Uses **Qt6 Mqtt module** for MQTT protocol implementation
    - Exposes `MQTTClient` type to QML
    - Direct TCP connection using `QTcpSocket` as `IODevice` transport
+   - Emits `messageReceived(topic, payload)` signals to QML
 
 2. **QML Wallpaper** (`package/`)
    - Canvas-based Matrix rain rendering
-   - Connects to C++ plugin via QML imports
-   - Real-time character updates from MQTT messages
-   - Configurable visual effects
+   - Multi-stream architecture: each history slot owns interleaved columns
+   - JSON syntax highlighting state machine
+   - Configurable visual effects with real-time updates
+   - Robust error handling for malformed payloads
+
+**See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full technical details.**
+
+### Rendering Pipeline
+
+1. MQTT message arrives → `onMessageReceived(topic, payload)`
+2. Message pushed to `messageHistory[]` (max 5, newest first)
+3. `rebuildHistoryChars()` generates `messageHistoryChars[][]`
+   - Each slot = `buildDisplayChars(topic, payload)` → `[{ch, isValue}, ...]`
+   - JSON payloads → `colorJsonChars()` state machine tags values as `isValue: true`
+4. Paint loop: column `i` reads from slot `i % nSlots`
+   - `isValue: false` → base palette color (keys, structural chars)
+   - `isValue: true` → `lightenColor(baseColor, 0.55)` (values)
 
 ### Requirements
 
@@ -225,7 +257,9 @@ payloads in the journal.
 ```
 module "ObsidianReq.MQTTRain" is not installed
 ```
-- Check `QML2_IMPORT_PATH` — see the [Critical: QML2_IMPORT_PATH](#️-critical-qml2_import_path) section
+- Check `~/.config/environment.d/99-mqttrain-qt.conf` exists and contains correct path
+- **Log out and log back in** (or reboot)
+- Verify with: `systemctl --user show-environment | grep QML`
 - Verify plugin files: `ls ~/.local/lib/qt6/qml/ObsidianReq/MQTTRain/`
 - Re-run `./install.sh`
 
@@ -239,6 +273,11 @@ module "ObsidianReq.MQTTRain" is not installed
 - Ensure `qt6-mqtt` is installed
 - Check Qt6 version: `qmake6 --version`
 - Verify Qt6 Mqtt: `find /usr/lib* -name "libQt6Mqtt.so*"`
+
+**JSON not highlighted / values same color as keys:**
+- This is a feature, not a bug! Check that color mode is set correctly
+- JSON values should be ~55% brighter than keys/structure
+- Try different palettes (Neon/Cyberpunk/Synthwave) to see the effect more clearly
 
 ## Development
 
@@ -261,6 +300,11 @@ matrixrain-plasma6/
 │       └── ui/
 │           ├── main.qml         # Wallpaper logic + Matrix rendering
 │           └── config.qml       # Settings UI
+├── docs/
+│   ├── mqtt-specs.md            # MQTT payload format specs (HA, Z2M)
+│   └── ARCHITECTURE.md          # Full technical architecture
+├── .github/
+│   └── copilot-instructions.md  # AI agent guidelines
 ├── install.sh
 ├── .gitignore
 └── README.md
@@ -274,8 +318,17 @@ cd plugin/build && make -j$(nproc)
 cp libmqttrainplugin.so ~/.local/lib/qt6/qml/ObsidianReq/MQTTRain/
 ```
 
-**To modify visual effects:** edit `package/contents/ui/main.qml`, then reload
-the wallpaper from the desktop right-click menu.
+**To modify visual effects:** edit `package/contents/ui/main.qml`, then:
+```bash
+cp package/contents/ui/main.qml ~/.local/share/plasma/wallpapers/obsidianreq.plasma.wallpaper.mqttrain/contents/ui/
+plasmashell --replace &
+```
+
+**To add config options:**
+1. Add entry to `package/contents/config/main.xml`
+2. Add UI control to `package/contents/ui/config.qml` with `cfg_<key>` alias
+3. Read in `main.qml` via `main.configuration.<key>`
+4. Reinstall: `kpackagetool6 --type Plasma/Wallpaper --upgrade package`
 
 ## License
 
@@ -284,7 +337,7 @@ GPL v3 - See [LICENSE](LICENSE) file
 ## Credits
 
 Original Matrix Rain wallpaper by [obsidianreq](https://github.com/obsidianreq)  
-Native MQTT integration (C++ plugin) by [savino](https://github.com/savino)
+Native MQTT integration, JSON highlighting, multi-stream rendering by [savino](https://github.com/savino)
 
 ## Acknowledgments
 
