@@ -126,18 +126,14 @@ WallpaperItem {
     }
 
     // -----------------------------------------------------------------------
-    // buildDisplayChars: [{ch,isValue}] for "<topic>: <payload>/"
+    // buildDisplayChars: [{ch,isValue}] for "<payload>/"
+    // Only the payload is displayed in the rain; topic is intentionally omitted.
     // 3-level fallback: JSON -> plain string -> flat uncolored catch-all
     // -----------------------------------------------------------------------
     function buildDisplayChars(topic, payload) {
-        var t = (topic   != null && topic   !== undefined) ? topic.toString()   : ""
         var p = (payload != null && payload !== undefined) ? payload.toString() : ""
         var result = []
         try {
-            for (var i = 0; i < t.length; i++)
-                result.push({ ch: t.charAt(i), isValue: false })
-            result.push({ ch: ':', isValue: false })
-            result.push({ ch: ' ', isValue: false })
             var parsed = null
             try { parsed = JSON.parse(p) } catch(e) {}
             if (parsed !== null && typeof parsed === "object") {
@@ -150,7 +146,7 @@ WallpaperItem {
         } catch(e) {
             writeLog("buildDisplayChars error: " + e)
             result = []
-            var flat = t + ": " + p + "/"
+            var flat = p + "/"
             for (var k = 0; k < flat.length; k++)
                 result.push({ ch: flat.charAt(k), isValue: false })
         }
