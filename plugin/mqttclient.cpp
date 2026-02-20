@@ -11,6 +11,7 @@ MQTTClient::MQTTClient(QObject *parent)
     , m_connackTimer(new QTimer(this))
     , m_reconnectTimer(new QTimer(this))
     , m_socket(nullptr)
+    , m_reconnectInterval(30000)
     , m_shouldBeConnected(false)
 {
     connect(m_client, &QMqttClient::connected,    this, &MQTTClient::onConnected);
@@ -30,7 +31,7 @@ MQTTClient::MQTTClient(QObject *parent)
 
     // Configurazione timer di riconnessione
     m_reconnectTimer->setSingleShot(true);
-    m_reconnectTimer->setInterval(30000); // 30 secondi
+    m_reconnectTimer->setInterval(m_reconnectInterval);
     connect(m_reconnectTimer, &QTimer::timeout, this, &MQTTClient::attemptReconnect);
 
     qDebug() << "MQTTClient initialized, Qt:" << qVersion();
@@ -90,6 +91,16 @@ void MQTTClient::setTopic(const QString &topic)
         m_topic = v;
         emit topicChanged();
         updateSubscription();
+    }
+}
+
+void MQTTClient::setReconnectInterval(int interval)
+{
+    if (m_reconnectInterval != interval) {
+        qDebug() << "setReconnectInterval:" << interval << "ms";
+        m_reconnectInterval = interval;
+        m_reconnectTimer->setInterval(interval);
+        emit reconnectIntervalChanged();
     }
 }
 
@@ -181,7 +192,7 @@ void MQTTClient::onDisconnected()
     
     // Avvia tentativi di riconnessione se necessario
     if (m_shouldBeConnected) {
-        qDebug() << "🔄 Scheduling reconnection attempt in 30 seconds...";
+        qDebug() << "🔄 Scheduling reconnection attempt in" << m_reconnectInterval << "ms...";
         m_reconnectTimer->start();
     }
 }
@@ -214,7 +225,7 @@ void MQTTClient::onErrorChanged(QMqttClient::ClientError error)
     if (m_shouldBeConnected && 
         error != QMqttClient::BadUsernameOrPassword && 
         error != QMqttClient::NotAuthorized) {
-        qDebug() << "🔄 Error detected, scheduling reconnection attempt...";
+        qDebug() << "🔄 Error detected, scheduling reconnection attempt in" << m_reconnectInterval << "ms...";
         m_reconnectTimer->start();
     }
 }
