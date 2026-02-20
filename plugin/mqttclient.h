@@ -50,6 +50,7 @@ private slots:
     void onDisconnected();
     void onMessageReceived(const QMqttMessage &message);
     void onErrorChanged(QMqttClient::ClientError error);
+    void attemptReconnect();
 
 private:
     void updateSubscription();
@@ -57,10 +58,12 @@ private:
     QMqttClient       *m_client;
     QMqttSubscription *m_subscription;
     QTimer            *m_connackTimer;
+    QTimer            *m_reconnectTimer;
     QTcpSocket        *m_socket;
     QString            m_host;
     int                m_port;
     QString            m_username;
     QString            m_password;
     QString            m_topic;
+    bool               m_shouldBeConnected;
 };
