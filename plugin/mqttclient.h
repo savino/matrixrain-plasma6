@@ -14,6 +14,7 @@ class MQTTClient : public QObject
     Q_PROPERTY(QString password READ password WRITE setPassword NOTIFY passwordChanged)
     Q_PROPERTY(QString topic    READ topic    WRITE setTopic    NOTIFY topicChanged)
     Q_PROPERTY(bool    connected READ connected               NOTIFY connectedChanged)
+    Q_PROPERTY(int     reconnectInterval READ reconnectInterval WRITE setReconnectInterval NOTIFY reconnectIntervalChanged)
 
 public:
     explicit MQTTClient(QObject *parent = nullptr);
@@ -25,6 +26,7 @@ public:
     QString password() const { return m_password; }
     QString topic()    const { return m_topic; }
     bool    connected() const;
+    int     reconnectInterval() const { return m_reconnectInterval; }
 
 public slots:
     void setHost(const QString &host);
@@ -32,6 +34,7 @@ public slots:
     void setUsername(const QString &username);
     void setPassword(const QString &password);
     void setTopic(const QString &topic);
+    void setReconnectInterval(int interval);
     void connectToHost();
     void disconnectFromHost();
 
@@ -42,6 +45,7 @@ signals:
     void passwordChanged();
     void topicChanged();
     void connectedChanged();
+    void reconnectIntervalChanged();
     void messageReceived(const QString &topic, const QString &payload);
     void connectionError(const QString &error);
 
@@ -65,5 +69,6 @@ private:
     QString            m_username;
     QString            m_password;
     QString            m_topic;
+    int                m_reconnectInterval;
     bool               m_shouldBeConnected;
 };
