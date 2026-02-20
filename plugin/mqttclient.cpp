@@ -9,7 +9,9 @@ MQTTClient::MQTTClient(QObject *parent)
     , m_subscription(nullptr)
     , m_port(1883)
     , m_connackTimer(new QTimer(this))
+    , m_reconnectTimer(new QTimer(this))
     , m_socket(nullptr)
+    , m_shouldBeConnected(false)
 {
     connect(m_client, &QMqttClient::connected,    this, &MQTTClient::onConnected);
     connect(m_client, &QMqttClient::disconnected, this, &MQTTClient::onDisconnected);
@@ -25,6 +27,11 @@ MQTTClient::MQTTClient(QObject *parent)
         emit connectionError("CONNACK timeout");
         disconnectFromHost();
     });
+
+    // Configurazione timer di riconnessione
+    m_reconnectTimer->setSingleShot(true);
+    m_reconnectTimer->setInterval(30000); // 30 secondi
+    connect(m_reconnectTimer, &QTimer::timeout, this, &MQTTClient::attemptReconnect);
 
     qDebug() << "MQTTClient initialized, Qt:" << qVersion();
 }
@@ -99,6 +106,9 @@ void MQTTClient::connectToHost()
         return;
     }
 
+    m_shouldBeConnected = true;
+    m_reconnectTimer->stop();
+
     qDebug() << "==== connectToHost ==== host:" << m_host << "port:" << m_port << "user:" << m_username;
 
     if (m_socket) {
@@ -138,7 +148,10 @@ void MQTTClient::connectToHost()
 
 void MQTTClient::disconnectFromHost()
 {
+    m_shouldBeConnected = false;
+    m_reconnectTimer->stop();
     m_connackTimer->stop();
+    
     if (m_subscription) {
         m_subscription->unsubscribe();
         m_subscription = nullptr;
@@ -160,8 +173,17 @@ void MQTTClient::onDisconnected()
 {
     m_connackTimer->stop();
     qDebug() << "❌ MQTT disconnected";
-    if (m_subscription) m_subscription = nullptr;
+    
+    if (m_subscription) 
+        m_subscription = nullptr;
+    
     emit connectedChanged();
+    
+    // Avvia tentativi di riconnessione se necessario
+    if (m_shouldBeConnected) {
+        qDebug() << "🔄 Scheduling reconnection attempt in 30 seconds...";
+        m_reconnectTimer->start();
+    }
 }
 
 void MQTTClient::onMessageReceived(const QMqttMessage &message)
@@ -187,6 +209,31 @@ void MQTTClient::onErrorChanged(QMqttClient::ClientError error)
     QString msg = errors.value(error, "Unknown error");
     qWarning() << "⚠️ MQTT Error:" << msg;
     emit connectionError(msg);
+    
+    // Avvia riconnessione per errori non legati a credenziali
+    if (m_shouldBeConnected && 
+        error != QMqttClient::BadUsernameOrPassword && 
+        error != QMqttClient::NotAuthorized) {
+        qDebug() << "🔄 Error detected, scheduling reconnection attempt...";
+        m_reconnectTimer->start();
+    }
+}
+
+void MQTTClient::attemptReconnect()
+{
+    if (!m_shouldBeConnected) {
+        qDebug() << "⏸️ Reconnection canceled (shouldBeConnected=false)";
+        return;
+    }
+    
+    // Verifica se siamo già connessi
+    if (connected()) {
+        qDebug() << "✅ Already connected, skipping reconnection";
+        return;
+    }
+    
+    qDebug() << "🔄 Attempting reconnection to" << m_host << ":" << m_port;
+    connectToHost();
 }
 
 void MQTTClient::updateSubscription()
