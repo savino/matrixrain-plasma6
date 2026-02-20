@@ -29,12 +29,16 @@ WallpaperItem {
     property bool   mqttDebug:    main.configuration.mqttDebug    !== undefined ? main.configuration.mqttDebug    : false
 
     // State
-    // messageHistory:      [{topic, payload}, ...]   newest first, max maxHistory
-    // messageHistoryChars: [[{ch,isValue},...], ...]  one slot per history entry
+    // messageHistory:    [{topic, payload}, ...]  newest first, max maxHistory (debug overlay only)
+    // columnAssignments: per-column MQTT display state.
+    //   null                          -> colonna libera, mostra caratteri random Matrix
+    //   { chars:[{ch,isValue}], passesLeft:int } -> colonna assegnata a un messaggio
     //
-    // Paint rule: column i -> slot = i % messageHistoryChars.length
-    property var messageHistory:      []
-    property var messageHistoryChars: []
+    // Ogni messaggio in arrivo viene assegnato a UNA colonna libera casuale.
+    // La colonna mostra il messaggio per `passesLeft` passate complete (default 3),
+    // poi torna libera (random). Le colonne non assegnate restano pure Matrix.
+    property var messageHistory:    []
+    property var columnAssignments: []
     readonly property int maxHistory: 5
     property bool debugOverlay: main.configuration.debugOverlay !== undefined ? main.configuration.debugOverlay : false
     property int  messagesReceived: 0
@@ -153,15 +157,26 @@ WallpaperItem {
         return result
     }
 
-    // Rebuild the full messageHistoryChars array from the current messageHistory.
-    function rebuildHistoryChars() {
-        var chars = []
-        for (var s = 0; s < main.messageHistory.length; s++) {
-            var e = main.messageHistory[s]
-            if (e && e.topic !== undefined)
-                chars.push(main.buildDisplayChars(e.topic, e.payload))
+    // -----------------------------------------------------------------------
+    // assignMessageToColumn: assegna il messaggio a una colonna libera casuale.
+    // Preferisce colonne libere (null); se tutte occupate ne sceglie una random.
+    // Mutazione diretta dell'array (nessun signal QML, nessun repaint spurio).
+    // -----------------------------------------------------------------------
+    function assignMessageToColumn(chars) {
+        var ca = main.columnAssignments
+        var nCols = ca.length
+        if (nCols === 0) return
+        var freeCols = []
+        for (var k = 0; k < nCols; k++) {
+            if (ca[k] === null) freeCols.push(k)
         }
-        main.messageHistoryChars = chars
+        var targetCol
+        if (freeCols.length > 0) {
+            targetCol = freeCols[Math.floor(Math.random() * freeCols.length)]
+        } else {
+            targetCol = Math.floor(Math.random() * nCols)
+        }
+        ca[targetCol] = { chars: chars, passesLeft: 3 }
     }
 
     // -----------------------------------------------------------------------
@@ -187,11 +202,14 @@ WallpaperItem {
             var safePayload = (payload != null && payload !== undefined) ? payload.toString() : ""
             main.writeDebug("📨 [" + safeTopic + "] " + safePayload)
             main.messagesReceived++
+            // Aggiorna history per il debug overlay
             var hist = main.messageHistory.slice()
             hist.unshift({ topic: safeTopic, payload: safePayload })
             if (hist.length > main.maxHistory) hist = hist.slice(0, main.maxHistory)
             main.messageHistory = hist
-            main.rebuildHistoryChars()
+            // Assegna il payload a una colonna libera casuale
+            var chars = main.buildDisplayChars(safeTopic, safePayload)
+            main.assignMessageToColumn(chars)
             canvas.requestPaint()
         }
 
@@ -226,11 +244,18 @@ WallpaperItem {
         anchors.fill: parent
         property var drops: []
 
+        // Inizializza drops e columnAssignments (tutte libere = null)
         function initDrops() {
             drops = []
+            var newCA = []
             var cols = Math.floor(canvas.width / main.fontSize)
-            for (var j = 0; j < cols; j++)
+            for (var j = 0; j < cols; j++) {
                 drops.push(Math.random() * canvas.height / main.fontSize)
+                newCA.push(null)
+            }
+            // Assegnazione via property per notificare QML; poi le mutazioni
+            // avvengono in-place direttamente su main.columnAssignments.
+            main.columnAssignments = newCA
         }
 
         Timer {
@@ -248,9 +273,8 @@ WallpaperItem {
             ctx.fillStyle = "rgba(0,0,0," + main.fadeStrength + ")"
             ctx.fillRect(0, 0, w, h)
 
-            var histChars = main.messageHistoryChars
-            var nSlots    = (main.mqttEnable && histChars && histChars.length > 0)
-                            ? histChars.length : 0
+            // Riferimento diretto all'array (mutazioni in-place, nessun repaint extra)
+            var ca = main.columnAssignments
 
             for (var i = 0; i < drops.length; i++) {
                 var x = i * main.fontSize
@@ -264,15 +288,17 @@ WallpaperItem {
                 ctx.font = main.fontSize + "px monospace"
 
                 var ch
-                if (nSlots > 0) {
-                    var slot      = i % nSlots
-                    var slotChars = histChars[slot]
+                var assignment = (ca && i < ca.length) ? ca[i] : null
+
+                if (main.mqttEnable && assignment !== null) {
+                    // --- Colonna assegnata a un messaggio MQTT ---
+                    var slotChars = assignment.chars
                     var slotLen   = (slotChars && slotChars.length > 0) ? slotChars.length : 0
 
                     if (slotLen > 0) {
                         var r   = Math.floor(drops[i])
                         var idx = (r + i) % slotLen
-                        var entry = (idx >= 0 && idx < slotChars.length) ? slotChars[idx] : null
+                        var entry = (idx >= 0 && idx < slotLen) ? slotChars[idx] : null
 
                         if (!entry || typeof entry.ch !== "string" || entry.ch.length === 0) {
                             ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
@@ -292,6 +318,7 @@ WallpaperItem {
                         ctx.fillStyle = isGlitch ? "#ffffff" : baseColor
                     }
                 } else {
+                    // --- Colonna libera: caratteri random Matrix ---
                     ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
                     ctx.fillStyle = isGlitch ? "#ffffff" : baseColor
                 }
@@ -299,8 +326,17 @@ WallpaperItem {
                 ctx.fillText(ch, x, y)
 
                 drops[i] += 1 + Math.random() * main.jitter / 100
-                if (drops[i] * main.fontSize > h + main.fontSize)
+                if (drops[i] * main.fontSize > h + main.fontSize) {
                     drops[i] = 0
+                    // Ogni volta che il rivolo wrappa, conta una passata completata.
+                    // Quando passesLeft arriva a 0 la colonna torna libera.
+                    if (ca && i < ca.length && ca[i] !== null) {
+                        ca[i].passesLeft -= 1
+                        if (ca[i].passesLeft <= 0) {
+                            ca[i] = null
+                        }
+                    }
+                }
             }
 
             // Debug overlay
@@ -322,13 +358,12 @@ WallpaperItem {
                 ctx.fillText("Broker: " + main.mqttHost + ":" + main.mqttPort, TX, 62)
                 ctx.fillText("Topic:  " + main.mqttTopic, TX, 78)
 
-                var totalChars = 0
-                for (var s = 0; s < main.messageHistoryChars.length; s++)
-                    if (main.messageHistoryChars[s]) totalChars += main.messageHistoryChars[s].length
+                var activeCols = 0
+                if (ca) { for (var s = 0; s < ca.length; s++) if (ca[s] !== null) activeCols++ }
                 ctx.fillStyle = "#aaaaaa"
                 ctx.fillText("Msgs:   " + main.messagesReceived
-                             + "  |  Slots: " + main.messageHistoryChars.length
-                             + "  |  Chars: " + totalChars
+                             + "  |  Active cols: " + activeCols
+                             + "  |  Total cols: " + (ca ? ca.length : 0)
                              + "  |  Fade: " + main.fadeStrength.toFixed(2), TX, 94)
 
                 ctx.fillStyle = "#555555"
