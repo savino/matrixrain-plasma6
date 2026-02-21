@@ -18,13 +18,13 @@ MQTTClient::MQTTClient(QObject *parent)
     connect(m_client, &QMqttClient::disconnected, this, &MQTTClient::onDisconnected);
     connect(m_client, &QMqttClient::errorChanged, this, &MQTTClient::onErrorChanged);
     connect(m_client, &QMqttClient::stateChanged, this, [](QMqttClient::ClientState s) {
-        qDebug() << "\xf0\x9f\x93\x8a MQTT state:" << s;
+        qDebug() << "📊 MQTT state:" << s;
     });
 
     m_connackTimer->setSingleShot(true);
     m_connackTimer->setInterval(5000);
     connect(m_connackTimer, &QTimer::timeout, this, [this]() {
-        qWarning() << "\xe2\x8f\xb0 CONNACK timeout!";
+        qWarning() << "⏰ CONNACK timeout!";
         emit connectionError("CONNACK timeout");
         // Preserve reconnect intent: disconnectFromHost() sets m_shouldBeConnected=false,
         // so we save and restore the flag to keep reconnection scheduled.
@@ -32,7 +32,8 @@ MQTTClient::MQTTClient(QObject *parent)
         disconnectFromHost();
         if (wasConnecting) {
             m_shouldBeConnected = true;
-            qDebug() << "\xf0\x9f\x94\x84 CONNACK timeout, scheduling reconnection in" << m_reconnectInterval << "ms...";
+            qDebug() << "🔄 CONNACK timeout, scheduling reconnection in" << m_reconnectInterval << "ms...";
+            emit reconnecting();
             m_reconnectTimer->start();
         }
     });
@@ -140,17 +141,17 @@ void MQTTClient::connectToHost()
     m_socket = new QTcpSocket(this);
 
     connect(m_socket, &QTcpSocket::stateChanged, [](QAbstractSocket::SocketState s) {
-        qDebug() << "\xf0\x9f\x94\x84 TCP:" << s;
+        qDebug() << "🔄 TCP:" << s;
     });
     connect(m_socket, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred),
             this, [this](QAbstractSocket::SocketError e) {
-        qWarning() << "\xf0\x9f\x94\xb4 TCP error:" << e << m_socket->errorString();
+        qWarning() << "🔴 TCP error:" << e << m_socket->errorString();
         emit connectionError("TCP: " + m_socket->errorString());
     });
 
     // Once TCP connects, attach as IODevice and send MQTT CONNECT
     connect(m_socket, &QTcpSocket::connected, this, [this]() {
-        qDebug() << "\xe2\x9c\x85 TCP connected \xe2\x80\x94 attaching IODevice transport";
+        qDebug() << "✅ TCP connected — attaching IODevice transport";
         m_client->setHostname(m_host);
         m_client->setPort(static_cast<quint16>(m_port));
         m_client->setUsername(m_username);
@@ -183,7 +184,7 @@ void MQTTClient::disconnectFromHost()
 void MQTTClient::onConnected()
 {
     m_connackTimer->stop();
-    qDebug() << "\xf0\x9f\x8e\x89 MQTT connected!";
+    qDebug() << "🎉 MQTT connected!";
     emit connectedChanged();
     updateSubscription();
 }
@@ -191,7 +192,7 @@ void MQTTClient::onConnected()
 void MQTTClient::onDisconnected()
 {
     m_connackTimer->stop();
-    qDebug() << "\xe2\x9d\x8c MQTT disconnected";
+    qDebug() << "❌ MQTT disconnected";
 
     if (m_subscription)
         m_subscription = nullptr;
@@ -200,7 +201,8 @@ void MQTTClient::onDisconnected()
 
     // Avvia tentativi di riconnessione se necessario
     if (m_shouldBeConnected) {
-        qDebug() << "\xf0\x9f\x94\x84 Scheduling reconnection attempt in" << m_reconnectInterval << "ms...";
+        qDebug() << "🔄 Scheduling reconnection attempt in" << m_reconnectInterval << "ms...";
+        emit reconnecting();
         m_reconnectTimer->start();
     }
 }
@@ -226,14 +228,15 @@ void MQTTClient::onErrorChanged(QMqttClient::ClientError error)
     };
 
     QString msg = errors.value(error, "Unknown error");
-    qWarning() << "\xe2\x9a\xa0\xef\xb8\x8f MQTT Error:" << msg;
+    qWarning() << "⚠️ MQTT Error:" << msg;
     emit connectionError(msg);
 
     // Avvia riconnessione per errori non legati a credenziali
     if (m_shouldBeConnected &&
         error != QMqttClient::BadUsernameOrPassword &&
         error != QMqttClient::NotAuthorized) {
-        qDebug() << "\xf0\x9f\x94\x84 Error detected, scheduling reconnection attempt in" << m_reconnectInterval << "ms...";
+        qDebug() << "🔄 Error detected, scheduling reconnection attempt in" << m_reconnectInterval << "ms...";
+        emit reconnecting();
         m_reconnectTimer->start();
     }
 }
@@ -241,17 +244,16 @@ void MQTTClient::onErrorChanged(QMqttClient::ClientError error)
 void MQTTClient::attemptReconnect()
 {
     if (!m_shouldBeConnected) {
-        qDebug() << "\xe2\x8f\xb8\xef\xb8\x8f Reconnection canceled (shouldBeConnected=false)";
+        qDebug() << "⏸️ Reconnection canceled (shouldBeConnected=false)";
         return;
     }
 
     if (connected()) {
-        qDebug() << "\xe2\x9c\x85 Already connected, skipping reconnection";
+        qDebug() << "✅ Already connected, skipping reconnection";
         return;
     }
 
-    qDebug() << "\xf0\x9f\x94\x84 Attempting reconnection to" << m_host << ":" << m_port;
-    emit reconnecting();
+    qDebug() << "🔄 Attempting reconnection to" << m_host << ":" << m_port;
     connectToHost();
 }
 
@@ -264,14 +266,14 @@ void MQTTClient::updateSubscription()
         m_subscription = nullptr;
     }
 
-    qDebug() << "\xf0\x9f\x93\xa1 subscribing to:" << m_topic;
+    qDebug() << "📡 subscribing to:" << m_topic;
     m_subscription = m_client->subscribe(m_topic, 0);
 
     if (m_subscription) {
         connect(m_subscription, &QMqttSubscription::messageReceived,
                 this, &MQTTClient::onMessageReceived);
-        qDebug() << "\xe2\x9c\x85 subscribed";
+        qDebug() << "✅ subscribed";
     } else {
-        qWarning() << "\xe2\x9d\x8c subscribe failed:" << m_topic;
+        qWarning() << "❌ subscribe failed:" << m_topic;
     }
 }
