@@ -1,421 +1,257 @@
+// main.qml
+// Matrix Rain MQTT Wallpaper - Main orchestration
+// Component-based architecture with pluggable renderers
+
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import org.kde.plasma.plasmoid 2.0
 import ObsidianReq.MQTTRain 1.0
+import "components"
+import "renderers"
 
 WallpaperItem {
     id: main
     anchors.fill: parent
-
-    property int  fontSize:    main.configuration.fontSize    !== undefined ? main.configuration.fontSize    : 16
-    property int  speed:       main.configuration.speed       !== undefined ? main.configuration.speed       : 50
-    // fadeStrength: stored as integer 1-20 in config, used as 0.01-0.20 here.
-    // Controls how quickly the trail fades: higher = shorter scie, lower = longer.
-    property real fadeStrength: (main.configuration.fadeStrength !== undefined
-                                 ? main.configuration.fadeStrength : 5) / 100.0
-    property int  colorMode:   main.configuration.colorMode   !== undefined ? main.configuration.colorMode   : 0
+    
+    // ===== Configuration Properties =====
+    property int fontSize: main.configuration.fontSize !== undefined ? main.configuration.fontSize : 16
+    property int speed: main.configuration.speed !== undefined ? main.configuration.speed : 50
+    property real fadeStrength: (main.configuration.fadeStrength !== undefined ? main.configuration.fadeStrength : 5) / 100.0
+    property int colorMode: main.configuration.colorMode !== undefined ? main.configuration.colorMode : 0
     property color singleColor: main.configuration.singleColor !== undefined ? main.configuration.singleColor : "#00ff00"
-    property int  paletteIndex: main.configuration.paletteIndex !== undefined ? main.configuration.paletteIndex : 0
-    property real jitter:      main.configuration.jitter      !== undefined ? main.configuration.jitter      : 0
-    property int  glitchChance: main.configuration.glitchChance !== undefined ? main.configuration.glitchChance : 1
-
+    property int paletteIndex: main.configuration.paletteIndex !== undefined ? main.configuration.paletteIndex : 0
+    property real jitter: main.configuration.jitter !== undefined ? main.configuration.jitter : 0
+    property int glitchChance: main.configuration.glitchChance !== undefined ? main.configuration.glitchChance : 1
+    
     // MQTT settings
-    property bool   mqttEnable:   main.configuration.mqttEnable   !== undefined ? main.configuration.mqttEnable   : false
-    property string mqttHost:     (main.configuration.mqttHost     !== undefined ? main.configuration.mqttHost     : "homeassistant.lan").trim()
-    property int    mqttPort:     main.configuration.mqttPort     !== undefined ? main.configuration.mqttPort     : 1883
-    property string mqttTopic:    (main.configuration.mqttTopic    !== undefined ? main.configuration.mqttTopic    : "zigbee2mqtt/#").trim()
+    property bool mqttEnable: main.configuration.mqttEnable !== undefined ? main.configuration.mqttEnable : false
+    property string mqttHost: (main.configuration.mqttHost !== undefined ? main.configuration.mqttHost : "homeassistant.lan").trim()
+    property int mqttPort: main.configuration.mqttPort !== undefined ? main.configuration.mqttPort : 1883
+    property string mqttTopic: (main.configuration.mqttTopic !== undefined ? main.configuration.mqttTopic : "zigbee2mqtt/#").trim()
     property string mqttUsername: (main.configuration.mqttUsername || "").trim()
     property string mqttPassword: (main.configuration.mqttPassword !== undefined && main.configuration.mqttPassword !== null) ? main.configuration.mqttPassword : ""
-    property bool   mqttDebug:    main.configuration.mqttDebug    !== undefined ? main.configuration.mqttDebug    : false
-    property int    mqttReconnectInterval: main.configuration.mqttReconnectInterval !== undefined ? main.configuration.mqttReconnectInterval : 30
-
-    // State
-    // messageHistory:    [{topic, payload}, ...]  newest first, max maxHistory (debug overlay only)
-    // columnAssignments: per-column MQTT display state.
-    //   null                          -> colonna libera, mostra caratteri random Matrix
-    //   { chars:[{ch,isValue}], passesLeft:int } -> colonna assegnata a un messaggio
-    //
-    // Ogni messaggio in arrivo viene assegnato a UNA colonna libera casuale.
-    // La colonna mostra il messaggio per `passesLeft` passate complete (default 3),
-    // poi torna libera (random). Le colonne non assegnate restano pure Matrix.
-    property var messageHistory:    []
-    property var columnAssignments: []
-    readonly property int maxHistory: 5
+    property bool mqttDebug: main.configuration.mqttDebug !== undefined ? main.configuration.mqttDebug : false
+    property int mqttReconnectInterval: main.configuration.mqttReconnectInterval !== undefined ? main.configuration.mqttReconnectInterval : 30
+    property int mqttRenderMode: main.configuration.mqttRenderMode !== undefined ? main.configuration.mqttRenderMode : 0
+    
+    // Debug
     property bool debugOverlay: main.configuration.debugOverlay !== undefined ? main.configuration.debugOverlay : false
-    property int  messagesReceived: 0
-
+    
+    // State tracking
+    property var messageHistory: []
+    property int messagesReceived: 0
+    readonly property int maxHistory: 5
+    
+    // Color palettes
     property var palettes: [
-        ["#00ff00","#ff00ff","#00ffff","#ff0000","#ffff00","#0000ff"],
-        ["#ff0066","#33ff99","#ffcc00","#6600ff","#00ccff","#ff3300"],
-        ["#ff00ff","#00ffcc","#cc00ff","#ffcc33","#33ccff","#ccff00"]
+        ["#00ff00", "#ff00ff", "#00ffff", "#ff0000", "#ffff00", "#0000ff"],
+        ["#ff0066", "#33ff99", "#ffcc00", "#6600ff", "#00ccff", "#ff3300"],
+        ["#ff00ff", "#00ffcc", "#cc00ff", "#ffcc33", "#33ccff", "#ccff00"]
     ]
-
-    // -----------------------------------------------------------------------
-    // lightenColor: blend a hex colour towards white by `factor`
-    // Handles #rrggbb and Qt's #aarrggbb. Returns original on parse failure.
-    // -----------------------------------------------------------------------
-    function lightenColor(hexColor, factor) {
-        var src = hexColor.toString()
-        var hex = src.replace(/^#/, "")
-        if (hex.length === 8) hex = hex.substring(2)
-        var r = parseInt(hex.substring(0, 2), 16)
-        var g = parseInt(hex.substring(2, 4), 16)
-        var b = parseInt(hex.substring(4, 6), 16)
-        if (isNaN(r) || isNaN(g) || isNaN(b)) return src
-        r = Math.min(255, Math.round(r + (255 - r) * factor))
-        g = Math.min(255, Math.round(g + (255 - g) * factor))
-        b = Math.min(255, Math.round(b + (255 - b) * factor))
-        return "rgb(" + r + "," + g + "," + b + ")"
-    }
-
-    // -----------------------------------------------------------------------
-    // colorJsonChars: tag each char of a valid JSON string as key/value.
-    // isValue=false : keys, structural chars, whitespace
-    // isValue=true  : value strings (quotes incl.), numbers, bool, null
-    // -----------------------------------------------------------------------
-    function colorJsonChars(json, result) {
-        if (!json || json.length === 0) return
-        var ST_STRUCT = 0, ST_IN_KEY = 1, ST_IN_VAL_STR = 2, ST_IN_VAL_NUM = 3
-        var state = ST_STRUCT, afterColon = false, arrayDepth = 0, escaped = false
-        var i = 0
-        try {
-            for (; i < json.length; i++) {
-                var ch = json.charAt(i)
-                if (state === ST_STRUCT) {
-                    if (ch === '"') {
-                        if (afterColon || arrayDepth > 0) {
-                            state = ST_IN_VAL_STR; afterColon = false; escaped = false
-                            result.push({ ch: ch, isValue: true })
-                        } else {
-                            state = ST_IN_KEY; escaped = false
-                            result.push({ ch: ch, isValue: false })
-                        }
-                    } else if (ch === '[') {
-                        arrayDepth++; afterColon = false; result.push({ ch: ch, isValue: false })
-                    } else if (ch === ']') {
-                        if (arrayDepth > 0) arrayDepth--; result.push({ ch: ch, isValue: false })
-                    } else if (ch === '{' || ch === '}' || ch === ',') {
-                        afterColon = false; result.push({ ch: ch, isValue: false })
-                    } else if (ch === ':') {
-                        afterColon = true; result.push({ ch: ch, isValue: false })
-                    } else if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
-                        result.push({ ch: ch, isValue: false })
-                    } else if (afterColon || arrayDepth > 0) {
-                        state = ST_IN_VAL_NUM; afterColon = false; result.push({ ch: ch, isValue: true })
-                    } else {
-                        result.push({ ch: ch, isValue: false })
-                    }
-                } else if (state === ST_IN_KEY) {
-                    result.push({ ch: ch, isValue: false })
-                    if (ch === '"' && !escaped) state = ST_STRUCT
-                    escaped = (ch === '\\' && !escaped)
-                } else if (state === ST_IN_VAL_STR) {
-                    result.push({ ch: ch, isValue: true })
-                    if (ch === '"' && !escaped) state = ST_STRUCT
-                    escaped = (ch === '\\' && !escaped)
-                } else if (state === ST_IN_VAL_NUM) {
-                    if (ch === ',' || ch === '}' || ch === ']') {
-                        state = ST_STRUCT; afterColon = false
-                        if (ch === ']' && arrayDepth > 0) arrayDepth--
-                        result.push({ ch: ch, isValue: false })
-                    } else {
-                        result.push({ ch: ch, isValue: true })
-                    }
-                }
-            }
-        } catch(e) {
-            writeLog("colorJsonChars error at pos " + i + ": " + e)
-            for (var k = i; k < json.length; k++)
-                result.push({ ch: json.charAt(k), isValue: false })
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // buildDisplayChars: [{ch,isValue}] for "<payload>/"
-    // Only the payload is displayed in the rain; topic is intentionally omitted.
-    // 3-level fallback: JSON -> plain string -> flat uncolored catch-all
-    // -----------------------------------------------------------------------
-    function buildDisplayChars(topic, payload) {
-        var p = (payload != null && payload !== undefined) ? payload.toString() : ""
-        var result = []
-        try {
-            var parsed = null
-            try { parsed = JSON.parse(p) } catch(e) {}
-            if (parsed !== null && typeof parsed === "object") {
-                colorJsonChars(p, result)
-            } else {
-                for (var j = 0; j < p.length; j++)
-                    result.push({ ch: p.charAt(j), isValue: true })
-            }
-            result.push({ ch: '/', isValue: false })
-        } catch(e) {
-            writeLog("buildDisplayChars error: " + e)
-            result = []
-            var flat = p + "/"
-            for (var k = 0; k < flat.length; k++)
-                result.push({ ch: flat.charAt(k), isValue: false })
-        }
-        return result
-    }
-
-    // -----------------------------------------------------------------------
-    // assignMessageToColumn: assegna il messaggio a una colonna libera casuale.
-    // Preferisce colonne libere (null); se tutte occupate ne sceglie una random.
-    // Mutazione diretta dell'array (nessun signal QML, nessun repaint spurio).
-    // -----------------------------------------------------------------------
-    function assignMessageToColumn(chars) {
-        var ca = main.columnAssignments
-        var nCols = ca.length
-        if (nCols === 0) return
-        var freeCols = []
-        for (var k = 0; k < nCols; k++) {
-            if (ca[k] === null) freeCols.push(k)
-        }
-        var targetCol
-        if (freeCols.length > 0) {
-            targetCol = freeCols[Math.floor(Math.random() * freeCols.length)]
-        } else {
-            targetCol = Math.floor(Math.random() * nCols)
-        }
-        ca[targetCol] = { chars: chars, passesLeft: 3 }
-    }
-
-    // -----------------------------------------------------------------------
-
-    function writeLog(msg)   { console.log("[MQTTRain] " + msg) }
-    function writeDebug(msg) { if (main.mqttDebug) console.log("[MQTTRain][debug] " + msg) }
-
+    
+    // Render mode names for debug
+    readonly property var renderModeNames: ["Mixed", "MQTT-Only", "MQTT-Driven"]
+    
+    // ===== Utility Functions =====
+    function writeLog(msg) { console.log("[MQTTRain] " + msg) }
+    function writeDebug(msg) { if (mqttDebug) console.log("[MQTTRain][debug] " + msg) }
+    
+    // ===== MQTT Client =====
     MQTTClient {
         id: mqttClient
         reconnectInterval: main.mqttReconnectInterval * 1000
-
+        
         onConnectedChanged: {
             if (connected) {
-                main.writeLog("✅ MQTT Connected")
+                writeLog("✅ MQTT Connected")
             } else {
-                main.writeLog("❌ MQTT Disconnected")
+                writeLog("❌ MQTT Disconnected")
             }
-            canvas.requestPaint()
         }
-
+        
         onReconnecting: {
-            main.writeLog("🔄 MQTT reconnecting in " + main.mqttReconnectInterval + "s...")
-            canvas.requestPaint()
+            writeLog("🔄 MQTT reconnecting in " + main.mqttReconnectInterval + "s...")
         }
-
+        
         onMessageReceived: function(topic, payload) {
-            var safeTopic   = (topic   != null && topic   !== undefined) ? topic.toString()   : ""
+            var safeTopic = (topic != null && topic !== undefined) ? topic.toString() : ""
             var safePayload = (payload != null && payload !== undefined) ? payload.toString() : ""
-            main.writeDebug("📨 [" + safeTopic + "] " + safePayload)
-            main.messagesReceived++
-            // Aggiorna history per il debug overlay
-            var hist = main.messageHistory.slice()
+            
+            writeDebug("📨 [" + safeTopic + "] " + safePayload)
+            messagesReceived++
+            
+            // Update message history for debug overlay
+            var hist = messageHistory.slice()
             hist.unshift({ topic: safeTopic, payload: safePayload })
-            if (hist.length > main.maxHistory) hist = hist.slice(0, main.maxHistory)
-            main.messageHistory = hist
-            // Assegna il payload a una colonna libera casuale
-            var chars = main.buildDisplayChars(safeTopic, safePayload)
-            main.assignMessageToColumn(chars)
-            canvas.requestPaint()
+            if (hist.length > maxHistory) {
+                hist = hist.slice(0, maxHistory)
+            }
+            messageHistory = hist
+            
+            // Delegate to active renderer
+            if (matrixCanvas.activeRenderer) {
+                matrixCanvas.activeRenderer.assignMessage(safeTopic, safePayload)
+                matrixCanvas.requestPaint()
+            }
         }
-
-        onConnectionError: function(error) { main.writeLog("❌ MQTT Error: " + error) }
+        
+        onConnectionError: function(error) {
+            writeLog("❌ MQTT Error: " + error)
+        }
     }
-
+    
+    // ===== MQTT Connection Management =====
     function mqttConnect() {
-        if (!main.mqttEnable) { mqttClient.disconnectFromHost(); return }
-        main.writeLog("Connecting to " + main.mqttHost + ":" + main.mqttPort
-                      + " topic=[" + main.mqttTopic + "]")
-        mqttClient.host     = main.mqttHost.trim()
-        mqttClient.port     = main.mqttPort
-        mqttClient.username = main.mqttUsername.trim()
-        mqttClient.password = main.mqttPassword
-        mqttClient.topic    = main.mqttTopic.trim()
+        if (!mqttEnable) {
+            mqttClient.disconnectFromHost()
+            return
+        }
+        
+        writeLog("Connecting to " + mqttHost + ":" + mqttPort + " topic=[" + mqttTopic + "]")
+        mqttClient.host = mqttHost.trim()
+        mqttClient.port = mqttPort
+        mqttClient.username = mqttUsername.trim()
+        mqttClient.password = mqttPassword
+        mqttClient.topic = mqttTopic.trim()
         mqttClient.connectToHost()
     }
-
-    Canvas {
-        id: canvas
+    
+    // ===== Renderer Instances =====
+    // Only one active at a time, selected by mqttRenderMode
+    
+    MixedModeRenderer {
+        id: mixedRenderer
+        fontSize: main.fontSize
+        baseColor: main.singleColor
+        jitter: main.jitter
+        glitchChance: main.glitchChance
+        palettes: main.palettes
+        paletteIndex: main.paletteIndex
+        colorMode: main.colorMode
+    }
+    
+    MqttOnlyRenderer {
+        id: mqttOnlyRenderer
+        fontSize: main.fontSize
+        baseColor: main.singleColor
+        jitter: main.jitter
+        glitchChance: main.glitchChance
+        palettes: main.palettes
+        paletteIndex: main.paletteIndex
+        colorMode: main.colorMode
+        messagePoolSize: 20
+    }
+    
+    MqttDrivenRenderer {
+        id: mqttDrivenRenderer
+        fontSize: main.fontSize
+        baseColor: main.singleColor
+        jitter: main.jitter
+        glitchChance: main.glitchChance
+        palettes: main.palettes
+        paletteIndex: main.paletteIndex
+        colorMode: main.colorMode
+    }
+    
+    // ===== Matrix Canvas =====
+    MatrixCanvas {
+        id: matrixCanvas
         anchors.fill: parent
-        property var drops: []
-
-        // Inizializza drops e columnAssignments (tutte libere = null)
-        function initDrops() {
-            drops = []
-            var newCA = []
-            var cols = Math.floor(canvas.width / main.fontSize)
-            for (var j = 0; j < cols; j++) {
-                drops.push(Math.random() * canvas.height / main.fontSize)
-                newCA.push(null)
-            }
-            // Assegnazione via property per notificare QML; poi le mutazioni
-            // avvengono in-place direttamente su main.columnAssignments.
-            main.columnAssignments = newCA
-        }
-
-        Timer {
-            id: timer
-            interval: 1000 / main.speed
-            running: true; repeat: true
-            onTriggered: canvas.requestPaint()
-        }
-
-        onPaint: {
-            var ctx = getContext("2d")
-            var w = width, h = height
-
-            // Fade overlay: opacity controlled by fadeStrength (0.01-0.20)
-            ctx.fillStyle = "rgba(0,0,0," + main.fadeStrength + ")"
-            ctx.fillRect(0, 0, w, h)
-
-            // Riferimento diretto all'array (mutazioni in-place, nessun repaint extra)
-            var ca = main.columnAssignments
-
-            for (var i = 0; i < drops.length; i++) {
-                var x = i * main.fontSize
-                var y = drops[i] * main.fontSize
-
-                var baseColor = (main.colorMode === 0)
-                    ? main.singleColor.toString()
-                    : main.palettes[main.paletteIndex][i % main.palettes[main.paletteIndex].length]
-
-                var isGlitch = (Math.random() < main.glitchChance / 100)
-                ctx.font = main.fontSize + "px monospace"
-
-                var ch
-                var assignment = (ca && i < ca.length) ? ca[i] : null
-
-                if (main.mqttEnable && assignment !== null) {
-                    // --- Colonna assegnata a un messaggio MQTT ---
-                    var slotChars = assignment.chars
-                    var slotLen   = (slotChars && slotChars.length > 0) ? slotChars.length : 0
-
-                    if (slotLen > 0) {
-                        var r   = Math.floor(drops[i])
-                        var idx = (r + i) % slotLen
-                        var entry = (idx >= 0 && idx < slotLen) ? slotChars[idx] : null
-
-                        if (!entry || typeof entry.ch !== "string" || entry.ch.length === 0) {
-                            ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
-                            ctx.fillStyle = isGlitch ? "#ffffff" : baseColor
-                        } else {
-                            ch = entry.ch
-                            if (isGlitch) {
-                                ctx.fillStyle = "#ffffff"
-                            } else if (entry.isValue) {
-                                ctx.fillStyle = main.lightenColor(baseColor, 0.55)
-                            } else {
-                                ctx.fillStyle = baseColor
-                            }
-                        }
-                    } else {
-                        ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
-                        ctx.fillStyle = isGlitch ? "#ffffff" : baseColor
-                    }
-                } else {
-                    // --- Colonna libera: caratteri random Matrix ---
-                    ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
-                    ctx.fillStyle = isGlitch ? "#ffffff" : baseColor
-                }
-
-                ctx.fillText(ch, x, y)
-
-                drops[i] += 1 + Math.random() * main.jitter / 100
-                if (drops[i] * main.fontSize > h + main.fontSize) {
-                    drops[i] = 0
-                    // Ogni volta che il rivolo wrappa, conta una passata completata.
-                    // Quando passesLeft arriva a 0 la colonna torna libera.
-                    if (ca && i < ca.length && ca[i] !== null) {
-                        ca[i].passesLeft -= 1
-                        if (ca[i].passesLeft <= 0) {
-                            ca[i] = null
-                        }
-                    }
-                }
-            }
-
-            // Debug overlay
-            if (main.debugOverlay) {
-                var BOX_X = 8, BOX_Y = 8, BOX_W = 760, BOX_H = 238
-                var TX = 14, LINE = 16
-
-                ctx.fillStyle = "rgba(0,0,0,0.88)"
-                ctx.fillRect(BOX_X, BOX_Y, BOX_W, BOX_H)
-
-                ctx.font = "bold 13px monospace"
-                ctx.fillStyle = "#00ff00"
-                ctx.fillText("⚙️ MQTT Rain Debug", TX, 26)
-
-                ctx.font = "12px monospace"
-                ctx.fillStyle = mqttClient.connected ? "#00ff00" : "#ff4444"
-                ctx.fillText("MQTT:   " + (mqttClient.connected ? "✅ CONNECTED" : "❌ DISCONNECTED"), TX, 46)
-                ctx.fillStyle = "#00ccff"
-                ctx.fillText("Broker: " + main.mqttHost + ":" + main.mqttPort, TX, 62)
-                ctx.fillText("Topic:  " + main.mqttTopic, TX, 78)
-
-                var activeCols = 0
-                if (ca) { for (var s = 0; s < ca.length; s++) if (ca[s] !== null) activeCols++ }
-                ctx.fillStyle = "#aaaaaa"
-                ctx.fillText("Msgs:   " + main.messagesReceived
-                             + "  |  Active cols: " + activeCols
-                             + "  |  Total cols: " + (ca ? ca.length : 0)
-                             + "  |  Fade: " + main.fadeStrength.toFixed(2), TX, 94)
-                
-                ctx.fillStyle = "#ffaa00"
-                ctx.fillText("🔄 Reconnect: " + main.mqttReconnectInterval + "s", TX, 110)
-
-                ctx.fillStyle = "#555555"
-                ctx.fillRect(TX, 119, BOX_W - 20, 1)
-                ctx.fillStyle = "#888888"
-                ctx.fillText("Recent messages (newest first):", TX, 132)
-
-                var alphas = ["#ffff00","#cccc00","#999900","#666600","#444400"]
-                var hist = main.messageHistory
-                var baseY = 148
-
-                if (hist.length === 0) {
-                    ctx.fillStyle = "#555555"
-                    ctx.fillText("(waiting for messages...)", TX, baseY)
-                } else {
-                    for (var m = 0; m < hist.length; m++) {
-                        var hEntry = hist[m]
-                        if (!hEntry) continue
-                        var line = (hEntry.topic || "") + ": " + (hEntry.payload || "")
-                        if (line.length > 98) line = line.substring(0, 95) + "…"
-                        ctx.fillStyle = alphas[m]
-                        ctx.fillText(line, TX, baseY + m * LINE)
-                    }
-                }
+        
+        fontSize: main.fontSize
+        speed: main.speed
+        fadeStrength: main.fadeStrength
+        mqttEnable: main.mqttEnable
+        
+        // Select active renderer based on mode
+        activeRenderer: {
+            switch(main.mqttRenderMode) {
+                case 0: return mixedRenderer
+                case 1: return mqttOnlyRenderer
+                case 2: return mqttDrivenRenderer
+                default: return mixedRenderer
             }
         }
-
-        Component.onCompleted: initDrops()
     }
-
-    onFontSizeChanged:     { canvas.initDrops(); canvas.requestPaint() }
-    onSpeedChanged:        { timer.interval = 1000 / main.speed }
-    onFadeStrengthChanged: canvas.requestPaint()
-    onColorModeChanged:    canvas.requestPaint()
-    onSingleColorChanged:  canvas.requestPaint()
-    onPaletteIndexChanged: canvas.requestPaint()
-    onJitterChanged:       canvas.requestPaint()
-    onGlitchChanceChanged: canvas.requestPaint()
-    onDebugOverlayChanged: canvas.requestPaint()
-
-    onMqttEnableChanged: { mqttEnable ? mqttConnect() : mqttClient.disconnectFromHost() }
-    onMqttHostChanged:   { if (mqttEnable) mqttConnect() }
-    onMqttPortChanged:   { if (mqttEnable) mqttConnect() }
-    onMqttTopicChanged:  { if (mqttEnable && mqttClient.connected) { mqttClient.disconnectFromHost(); mqttConnect() } }
-
+    
+    // ===== Debug Overlay =====
+    MQTTDebugOverlay {
+        id: debugOverlay
+        anchors.fill: parent
+        
+        debugEnabled: main.debugOverlay
+        mqttConnected: mqttClient.connected
+        mqttHost: main.mqttHost
+        mqttPort: main.mqttPort
+        mqttTopic: main.mqttTopic
+        reconnectInterval: main.mqttReconnectInterval
+        messagesReceived: main.messagesReceived
+        fadeStrength: main.fadeStrength
+        renderMode: main.renderModeNames[main.mqttRenderMode]
+        messageHistory: main.messageHistory
+        
+        // Calculate active columns from renderer
+        activeColumns: {
+            if (!matrixCanvas.activeRenderer) return 0
+            var ca = matrixCanvas.activeRenderer.columnAssignments
+            if (!ca) return 0
+            var count = 0
+            for (var i = 0; i < ca.length; i++) {
+                if (ca[i] !== null && (ca[i].active !== false)) count++
+            }
+            return count
+        }
+        
+        totalColumns: matrixCanvas.activeRenderer ? matrixCanvas.activeRenderer.columns : 0
+    }
+    
+    // ===== Configuration Change Handlers =====
+    onFontSizeChanged: matrixCanvas.initDrops()
+    onSpeedChanged: matrixCanvas.requestPaint()
+    onFadeStrengthChanged: matrixCanvas.requestPaint()
+    onColorModeChanged: matrixCanvas.requestPaint()
+    onSingleColorChanged: matrixCanvas.requestPaint()
+    onPaletteIndexChanged: matrixCanvas.requestPaint()
+    onJitterChanged: matrixCanvas.requestPaint()
+    onGlitchChanceChanged: matrixCanvas.requestPaint()
+    onDebugOverlayChanged: matrixCanvas.requestPaint()
+    
+    onMqttRenderModeChanged: {
+        writeLog("🎭 Render mode changed to: " + renderModeNames[mqttRenderMode])
+        matrixCanvas.initDrops()
+        matrixCanvas.requestPaint()
+    }
+    
+    onMqttEnableChanged: {
+        mqttEnable ? mqttConnect() : mqttClient.disconnectFromHost()
+    }
+    
+    onMqttHostChanged: { if (mqttEnable) mqttConnect() }
+    onMqttPortChanged: { if (mqttEnable) mqttConnect() }
+    onMqttTopicChanged: {
+        if (mqttEnable && mqttClient.connected) {
+            mqttClient.disconnectFromHost()
+            mqttConnect()
+        }
+    }
+    
+    // ===== Initialization =====
     Component.onCompleted: {
-        main.writeLog("=== Matrix Rain MQTT Wallpaper ===")
-        main.writeLog("MQTT host=[" + main.mqttHost + "] port=" + main.mqttPort
-                      + " topic=[" + main.mqttTopic + "]")
-        main.writeLog("🔄 Reconnect interval: " + main.mqttReconnectInterval + "s")
-        canvas.initDrops()
-        if (main.mqttEnable) Qt.callLater(mqttConnect)
-        else main.writeLog("MQTT disabled — random Matrix characters")
+        writeLog("=== Matrix Rain MQTT Wallpaper ===")
+        writeLog("MQTT host=[" + mqttHost + "] port=" + mqttPort + " topic=[" + mqttTopic + "]")
+        writeLog("🔄 Reconnect interval: " + mqttReconnectInterval + "s")
+        writeLog("🎭 Render mode: " + renderModeNames[mqttRenderMode])
+        
+        matrixCanvas.initDrops()
+        
+        if (mqttEnable) {
+            Qt.callLater(mqttConnect)
+        } else {
+            writeLog("MQTT disabled — random Matrix characters")
+        }
     }
-
-    Component.onDestruction: { mqttClient.disconnectFromHost() }
+    
+    Component.onDestruction: {
+        mqttClient.disconnectFromHost()
+    }
 }
