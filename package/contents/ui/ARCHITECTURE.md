@@ -88,9 +88,9 @@ Item {
 **Behavior**: Columns activate only when messages arrive.
 
 - Columns inactive (blank) by default
-- Activate column on message arrival
+- Activate random inactive column on message arrival
 - Display message for 3 passes then deactivate
-- Creates dramatic "message burst" effect
+- Creates dramatic "message burst" effect distributed across screen
 - Best for: Event notifications, sparse message patterns
 
 ## Utility Modules
@@ -212,14 +212,59 @@ columnAssignments = newCA  // Triggers property change
 - `redistributeMessages()` - Batch column updates
 - Any function that modifies `columnAssignments` array
 
+### ⚠️ CRITICAL: Randomize Column Selection
+
+When selecting columns for messages, **always randomize** from available columns:
+
+**❌ WRONG** (all messages go to column 0):
+```qml
+function findAvailableColumn() {
+    for (var i = 0; i < columns; i++) {
+        if (columnAssignments[i] === null) {
+            return i  // ❌ Always returns first inactive (usually 0)
+        }
+    }
+    return -1
+}
+```
+
+**✅ CORRECT** (messages distributed randomly):
+```qml
+function findAvailableColumn() {
+    // Build list of ALL inactive columns
+    var inactiveCols = []
+    for (var i = 0; i < columns; i++) {
+        if (columnAssignments[i] === null || !columnAssignments[i].active) {
+            inactiveCols.push(i)
+        }
+    }
+    
+    // Pick RANDOM from inactive list
+    if (inactiveCols.length > 0) {
+        var randomIdx = Math.floor(Math.random() * inactiveCols.length)
+        return inactiveCols[randomIdx]  // ✅ Random distribution
+    }
+    
+    // All active: pick random to replace
+    return Math.floor(Math.random() * columns)
+}
+```
+
+**Why this matters:**
+- Sequential search (i=0, i=1...) always finds column 0 first
+- Messages stack on same column, defeating visual effect
+- Randomization spreads messages across screen
+- Creates more dramatic "burst" or "cascade" effect
+
 ## Best Practices
 
 1. **Keep renderers stateless**: All config via properties
 2. **Use utility modules**: Don't duplicate logic
 3. **Clone before mutating arrays**: Always use slice() → mutate → reassign pattern
-4. **Avoid console.log in hot paths**: Use `mqttDebug` flag for conditional logging
-5. **Test all three modes**: Ensure renderer interface compliance
-6. **Document render behavior**: Update this file for new modes
+4. **Randomize column selection**: Build list → pick random, not first match
+5. **Avoid console.log in hot paths**: Use `mqttDebug` flag for conditional logging
+6. **Test all three modes**: Ensure renderer interface compliance
+7. **Document render behavior**: Update this file for new modes
 
 ## Debugging
 
@@ -231,6 +276,7 @@ columnAssignments = newCA  // Triggers property change
   - `[MqttDrivenRenderer]`
 - Verify renderer selection: Look for "🎭 Render mode changed to: ..."
 - **Black screen with messages arriving?** → Check array cloning pattern in renderer
+- **All messages in column 0?** → Check column selection randomization
 
 ## Common Issues
 
@@ -244,6 +290,22 @@ columnAssignments = newCA  // Triggers property change
 var newCA = columnAssignments.slice()
 // ... modify newCA ...
 columnAssignments = newCA  // Don't forget this!
+```
+
+### All messages appear in column 0 only
+**Symptom**: Multiple messages arrive but all stack on leftmost column.
+
+**Cause**: Column selection uses sequential search (`for i=0...`) instead of randomization.
+
+**Solution**: Build list of available columns, pick random:
+```qml
+var available = []
+for (var i = 0; i < columns; i++) {
+    if (columnAssignments[i] === null) available.push(i)
+}
+if (available.length > 0) {
+    return available[Math.floor(Math.random() * available.length)]
+}
 ```
 
 ### Messages not updating after first message
