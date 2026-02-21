@@ -16,6 +16,7 @@
     <Entry key="mqttUsername" type="String"><Default>mqtt_user</Default></Entry>
     <Entry key="mqttPassword" type="String"><Default>mqtt_user</Default></Entry>
     <Entry key="mqttReconnectInterval" type="Int"><Default>30</Default><Range min="1" max="600"/></Entry>
+    <Entry key="mqttRenderMode" type="Int"><Default>0</Default><Range min="0" max="2"/></Entry>
     <Entry key="debugOverlay" type="Bool"><Default>false</Default></Entry>
     <Entry key="mqttDebug" type="Bool"><Default>false</Default></Entry>
   </Group>
