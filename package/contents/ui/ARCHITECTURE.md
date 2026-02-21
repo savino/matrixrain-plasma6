@@ -6,12 +6,13 @@ This document describes the component-based architecture of the Matrix Rain MQTT
 
 ```
 package/contents/ui/
-├── main.qml                      # Main orchestration (200 lines)
+├── main.qml                      # Main orchestration (~220 lines)
 ├── config.qml                    # Configuration UI (tabbed)
 ├── components/                   # Reusable UI components
 │   ├── MatrixCanvas.qml          # Canvas rendering base
 │   └── MQTTDebugOverlay.qml      # Debug information overlay
 ├── renderers/                    # Render mode strategies
+│   ├── ClassicRenderer.qml       # Pure random Matrix (MQTT-disabled)
 │   ├── MixedModeRenderer.qml     # Mixed MQTT + random
 │   ├── MqttOnlyRenderer.qml      # MQTT messages only
 │   └── MqttDrivenRenderer.qml    # On-demand columns
@@ -28,6 +29,7 @@ package/contents/ui/
 - Renderer selection and instantiation
 - Component orchestration
 - Event routing
+- Automatic fallback to ClassicRenderer when MQTT disabled
 
 ### MatrixCanvas.qml
 - Renderer-agnostic canvas
@@ -67,8 +69,20 @@ Item {
 }
 ```
 
+## Available Renderers
+
+### ClassicRenderer
+**Behavior**: Pure Matrix rain with random characters (MQTT-disabled fallback).
+
+- Automatic fallback when `mqttEnable` is false
+- All columns display random Katakana characters
+- No MQTT dependency, always works
+- Respects color/glitch/jitter settings
+- Classic green falling characters effect
+- Best for: Testing, demonstration, or pure aesthetic use
+
 ### MixedModeRenderer
-**Behavior**: Default mode combining MQTT messages with random Matrix characters.
+**Behavior**: Default MQTT mode combining messages with random characters.
 
 - MQTT messages assigned to random free columns
 - Free columns display random Katakana characters
@@ -92,6 +106,33 @@ Item {
 - Display message for 3 passes then deactivate
 - Creates dramatic "message burst" effect distributed across screen
 - Best for: Event notifications, sparse message patterns
+
+## Renderer Selection Logic
+
+The active renderer is determined by MQTT enable state:
+
+```qml
+activeRenderer: {
+    // Fallback to Classic if MQTT disabled
+    if (!main.mqttEnable) {
+        return classicRenderer
+    }
+    
+    // MQTT enabled: select based on render mode
+    switch(main.mqttRenderMode) {
+        case 0: return mixedRenderer      // Mixed MQTT + random
+        case 1: return mqttOnlyRenderer   // MQTT only
+        case 2: return mqttDrivenRenderer // On-demand
+        default: return mixedRenderer
+    }
+}
+```
+
+**Key points:**
+- ClassicRenderer always active when MQTT disabled
+- MQTT render mode selection only applies when MQTT enabled
+- Ensures wallpaper always displays something, never blank
+- Switching MQTT on/off triggers renderer change automatically
 
 ## Utility Modules
 
@@ -132,6 +173,8 @@ JSON parsing, character tagging, column assignment logic.
 4. **Update renderer selection**:
    ```qml
    activeRenderer: {
+       if (!main.mqttEnable) return classicRenderer
+       
        switch(main.mqttRenderMode) {
            case 3: return myRenderer  // New mode
            // ... existing cases
@@ -145,17 +188,19 @@ JSON parsing, character tagging, column assignment logic.
 1. User changes setting in `config.qml`
 2. Value saved to `main.xml` schema
 3. `main.qml` reads via `main.configuration.*`
-4. Property binding updates renderer
+4. Property binding updates renderer (including Classic fallback)
 5. Canvas requests repaint
 
 ## Message Flow
 
 1. MQTT message arrives → `mqttClient.onMessageReceived`
 2. Update message history for debug
-3. Call `activeRenderer.assignMessage(topic, payload)`
+3. Call `activeRenderer.assignMessage(topic, payload)` (only if MQTT enabled)
 4. Renderer processes via `MatrixRainLogic.buildDisplayChars()`
 5. Renderer updates `columnAssignments` array
 6. Canvas repaints → calls `renderer.renderColumnContent()` per column
+
+**Note:** ClassicRenderer ignores `assignMessage()` calls since it only renders random characters.
 
 ## Performance Considerations
 
@@ -164,6 +209,7 @@ JSON parsing, character tagging, column assignment logic.
 - **Renderer delegation**: Canvas doesn't know message format
 - **Fade overlay**: Single fillRect, not per-character alpha
 - **Column wrapping**: Batch wrap notifications, not per-frame
+- **Classic mode**: Zero MQTT overhead, pure random rendering
 
 ## QML Property System Gotchas
 
@@ -262,21 +308,24 @@ function findAvailableColumn() {
 2. **Use utility modules**: Don't duplicate logic
 3. **Clone before mutating arrays**: Always use slice() → mutate → reassign pattern
 4. **Randomize column selection**: Build list → pick random, not first match
-5. **Avoid console.log in hot paths**: Use `mqttDebug` flag for conditional logging
-6. **Test all three modes**: Ensure renderer interface compliance
-7. **Document render behavior**: Update this file for new modes
+5. **Handle MQTT-disabled gracefully**: ClassicRenderer always available
+6. **Avoid console.log in hot paths**: Use `mqttDebug` flag for conditional logging
+7. **Test all modes including Classic**: Ensure renderer interface compliance
+8. **Document render behavior**: Update this file for new modes
 
 ## Debugging
 
 - Enable **Debug Overlay** for live statistics and mode confirmation
 - Enable **Debug MQTT logging** for message inspection
 - Check console for renderer-specific logs:
+  - `[ClassicRenderer]`
   - `[MixedModeRenderer]`
   - `[MqttOnlyRenderer]`
   - `[MqttDrivenRenderer]`
-- Verify renderer selection: Look for "🎭 Render mode changed to: ..."
+- Verify renderer selection: Look for "🎭 Render mode changed to: ..." or "🎭 Classic mode"
 - **Black screen with messages arriving?** → Check array cloning pattern in renderer
 - **All messages in column 0?** → Check column selection randomization
+- **Black screen with MQTT disabled?** → Verify ClassicRenderer is selected
 
 ## Common Issues
 
@@ -290,6 +339,19 @@ function findAvailableColumn() {
 var newCA = columnAssignments.slice()
 // ... modify newCA ...
 columnAssignments = newCA  // Don't forget this!
+```
+
+### Black screen when MQTT disabled
+**Symptom**: Disabling MQTT checkbox results in blank wallpaper.
+
+**Cause**: Renderer selection not falling back to ClassicRenderer.
+
+**Solution**: Verify `activeRenderer` binding includes MQTT enable check:
+```qml
+activeRenderer: {
+    if (!main.mqttEnable) return classicRenderer
+    // ... MQTT mode selection
+}
 ```
 
 ### All messages appear in column 0 only
@@ -330,3 +392,4 @@ if (available.length > 0) {
 - Custom character sets per renderer
 - Message filtering/routing to specific columns
 - Per-column color schemes
+- Time-based renderer switching
