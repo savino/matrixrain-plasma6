@@ -7,7 +7,7 @@ This document describes the component-based architecture of the Matrix Rain MQTT
 ```
 package/contents/ui/
 ├── main.qml                      # Main orchestration (200 lines)
-├── config.qml                    # Configuration UI
+├── config.qml                    # Configuration UI (tabbed)
 ├── components/                   # Reusable UI components
 │   ├── MatrixCanvas.qml          # Canvas rendering base
 │   └── MQTTDebugOverlay.qml      # Debug information overlay
@@ -160,30 +160,111 @@ JSON parsing, character tagging, column assignment logic.
 ## Performance Considerations
 
 - **JS modules use `.pragma library`**: Single instance, faster
-- **Direct array mutation**: Avoid property notifications in hot loops
+- **Array cloning for property changes**: See QML gotchas below
 - **Renderer delegation**: Canvas doesn't know message format
 - **Fade overlay**: Single fillRect, not per-character alpha
 - **Column wrapping**: Batch wrap notifications, not per-frame
+
+## QML Property System Gotchas
+
+### ⚠️ CRITICAL: Array Mutation Does Not Trigger Property Changes
+
+QML's property binding system **does NOT detect** array mutations by index:
+
+**❌ WRONG** (property change not detected, canvas won't repaint):
+```qml
+function assignMessage(topic, payload) {
+    var chars = Logic.buildDisplayChars(topic, payload)
+    columnAssignments[5] = { chars: chars, passesLeft: 3 }  // ❌ Mutation not detected!
+}
+```
+
+**✅ CORRECT** (property change detected, canvas repaints):
+```qml
+function assignMessage(topic, payload) {
+    var chars = Logic.buildDisplayChars(topic, payload)
+    var newCA = columnAssignments.slice()  // Clone array
+    newCA[5] = { chars: chars, passesLeft: 3 }  // Mutate clone
+    columnAssignments = newCA  // Reassign triggers property change ✅
+}
+```
+
+**Why this matters:**
+- `MatrixCanvas` binds to `activeRenderer.columnAssignments`
+- When `columnAssignments` changes, canvas knows to repaint
+- Index mutations (`array[i] = value`) don't trigger property signals
+- **Must clone → mutate → reassign** to trigger change notification
+
+**Pattern for all renderers:**
+```qml
+// Read-only access: direct use is fine
+var assignment = columnAssignments[columnIndex]
+
+// Write/mutation: always clone-mutate-reassign
+var newCA = columnAssignments.slice()  // or Array.from(columnAssignments)
+newCA[columnIndex] = newValue
+columnAssignments = newCA  // Triggers property change
+```
+
+**This applies to:**
+- `assignMessage()` - Adding messages to columns
+- `onColumnWrap()` - Decrementing passesLeft or freeing columns
+- `redistributeMessages()` - Batch column updates
+- Any function that modifies `columnAssignments` array
 
 ## Best Practices
 
 1. **Keep renderers stateless**: All config via properties
 2. **Use utility modules**: Don't duplicate logic
-3. **Avoid console.log in hot paths**: Use `mqttDebug` flag
-4. **Test all three modes**: Ensure renderer interface compliance
-5. **Document render behavior**: Update this file for new modes
+3. **Clone before mutating arrays**: Always use slice() → mutate → reassign pattern
+4. **Avoid console.log in hot paths**: Use `mqttDebug` flag for conditional logging
+5. **Test all three modes**: Ensure renderer interface compliance
+6. **Document render behavior**: Update this file for new modes
 
 ## Debugging
 
-- Enable **Debug Overlay** for live statistics
+- Enable **Debug Overlay** for live statistics and mode confirmation
 - Enable **Debug MQTT logging** for message inspection
-- Check console for `[MQTTRain]` prefixed logs
+- Check console for renderer-specific logs:
+  - `[MixedModeRenderer]`
+  - `[MqttOnlyRenderer]`
+  - `[MqttDrivenRenderer]`
 - Verify renderer selection: Look for "🎭 Render mode changed to: ..."
+- **Black screen with messages arriving?** → Check array cloning pattern in renderer
+
+## Common Issues
+
+### Black screen / no columns rendering
+**Symptom**: Debug shows messages arriving, but no Matrix characters appear.
+
+**Cause**: Renderer mutating `columnAssignments` without triggering property change.
+
+**Solution**: Ensure all array modifications use clone-mutate-reassign pattern:
+```qml
+var newCA = columnAssignments.slice()
+// ... modify newCA ...
+columnAssignments = newCA  // Don't forget this!
+```
+
+### Messages not updating after first message
+**Symptom**: First message appears, subsequent messages don't update.
+
+**Cause**: `assignMessage()` or `onColumnWrap()` mutating array directly.
+
+**Solution**: Review all functions that modify `columnAssignments` for proper cloning.
+
+### Render mode switch broken
+**Symptom**: Switching modes doesn't change behavior.
+
+**Cause**: `activeRenderer` binding not updating or wrong index in switch.
+
+**Solution**: Check `mqttRenderMode` value in debug overlay and verify switch statement.
 
 ## Future Extensions
 
-- Additional renderers (e.g., columnar JSON, binary mode)
-- Renderer-specific configuration
+- Additional renderers (e.g., columnar JSON, binary mode, wave effects)
+- Renderer-specific configuration UI
 - Animation transition between modes
 - Custom character sets per renderer
 - Message filtering/routing to specific columns
+- Per-column color schemes
