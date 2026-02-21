@@ -22,6 +22,7 @@ KirigamiLayouts.FormLayout {
     property alias cfg_mqttTopic:     mqttTopic.text
     property alias cfg_mqttUsername:  mqttUsername.text
     property alias cfg_mqttPassword:  mqttPassword.text
+    property alias cfg_mqttReconnectInterval: mqttReconnectIntervalSpin.value
     property alias cfg_debugOverlay:  debugOverlay.checked
     property alias cfg_mqttDebug:     mqttDebug.checked
 
@@ -95,6 +96,11 @@ KirigamiLayouts.FormLayout {
         id: mqttPassword
         echoMode: TextInput.Password
         KirigamiLayouts.FormData.label: qsTr("MQTT Password (optional)")
+    }
+    QC.SpinBox {
+        id: mqttReconnectIntervalSpin
+        from: 1; to: 600; stepSize: 5
+        KirigamiLayouts.FormData.label: qsTr("MQTT reconnect interval (s)")
     }
     QC.CheckBox {
         id: debugOverlay
