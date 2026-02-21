@@ -33,16 +33,24 @@ Item {
         var chars = Logic.buildDisplayChars(topic, payload)
         var targetCol = findAvailableColumn()
         
+        console.log("[MqttDrivenRenderer] assignMessage: targetCol=" + targetCol + ", chars.length=" + chars.length)
+        
         if (targetCol !== -1) {
-            columnAssignments[targetCol] = {
+            // Clone array to trigger property change
+            var newCA = columnAssignments.slice()
+            newCA[targetCol] = {
                 chars: chars,
                 passesLeft: 3,
                 active: true
             }
+            columnAssignments = newCA
             
             // Track as active
             if (activeColumns.indexOf(targetCol) === -1) {
-                activeColumns.push(targetCol)
+                var newActive = activeColumns.slice()
+                newActive.push(targetCol)
+                activeColumns = newActive
+                console.log("[MqttDrivenRenderer] activated column " + targetCol + ", total active: " + newActive.length)
             }
         }
     }
@@ -103,17 +111,26 @@ Item {
      */
     function onColumnWrap(columnIndex) {
         if (columnAssignments[columnIndex] !== null && columnAssignments[columnIndex].active) {
-            columnAssignments[columnIndex].passesLeft -= 1
+            // Clone array to trigger property change
+            var newCA = columnAssignments.slice()
+            newCA[columnIndex].passesLeft -= 1
             
-            if (columnAssignments[columnIndex].passesLeft <= 0) {
+            if (newCA[columnIndex].passesLeft <= 0) {
                 // Deactivate column
-                columnAssignments[columnIndex].active = false
+                newCA[columnIndex].active = false
+                columnAssignments = newCA
                 
                 // Remove from active tracking
                 var idx = activeColumns.indexOf(columnIndex)
                 if (idx !== -1) {
-                    activeColumns.splice(idx, 1)
+                    var newActive = activeColumns.slice()
+                    newActive.splice(idx, 1)
+                    activeColumns = newActive
+                    console.log("[MqttDrivenRenderer] deactivated column " + columnIndex + ", active remaining: " + newActive.length)
                 }
+            } else {
+                // Just update the array
+                columnAssignments = newCA
             }
         }
     }
@@ -122,6 +139,8 @@ Item {
      * Initialize column assignments (all inactive)
      */
     function initializeColumns(numColumns) {
+        console.log("[MqttDrivenRenderer] initializeColumns: numColumns=" + numColumns)
+        
         var newCA = []
         for (var i = 0; i < numColumns; i++) {
             newCA.push(null)
