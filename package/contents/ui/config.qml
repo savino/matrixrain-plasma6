@@ -23,6 +23,7 @@ KirigamiLayouts.FormLayout {
     property alias cfg_mqttUsername:  mqttUsername.text
     property alias cfg_mqttPassword:  mqttPassword.text
     property alias cfg_mqttReconnectInterval: mqttReconnectIntervalSpin.value
+    property alias cfg_mqttRenderMode: mqttRenderModeCombo.currentIndex
     property alias cfg_debugOverlay:  debugOverlay.checked
     property alias cfg_mqttDebug:     mqttDebug.checked
 
@@ -101,6 +102,15 @@ KirigamiLayouts.FormLayout {
         id: mqttReconnectIntervalSpin
         from: 1; to: 600; stepSize: 5
         KirigamiLayouts.FormData.label: qsTr("MQTT reconnect interval (s)")
+    }
+    QC.ComboBox {
+        id: mqttRenderModeCombo
+        model: [
+            qsTr("Mixed (MQTT + Random)"),
+            qsTr("MQTT Only (Loop messages)"),
+            qsTr("MQTT Driven (On message)")
+        ]
+        KirigamiLayouts.FormData.label: qsTr("MQTT Render Mode")
     }
     QC.CheckBox {
         id: debugOverlay
