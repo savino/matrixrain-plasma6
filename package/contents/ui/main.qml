@@ -56,6 +56,12 @@ WallpaperItem {
     function writeLog(msg) { console.log("[MQTTRain] " + msg) }
     function writeDebug(msg) { if (mqttDebug) console.log("[MQTTRain][debug] " + msg) }
     
+    // Current effective render mode name (including Classic)
+    function getEffectiveRenderMode() {
+        if (!mqttEnable) return "Classic"
+        return renderModeNames[mqttRenderMode]
+    }
+    
     // ===== MQTT Client =====
     MQTTClient {
         id: mqttClient
@@ -88,8 +94,8 @@ WallpaperItem {
             }
             messageHistory = hist
             
-            // Delegate to active renderer
-            if (matrixCanvas.activeRenderer) {
+            // Delegate to active renderer (only if MQTT enabled)
+            if (mqttEnable && matrixCanvas.activeRenderer) {
                 matrixCanvas.activeRenderer.assignMessage(safeTopic, safePayload)
                 matrixCanvas.requestPaint()
             }
@@ -117,8 +123,19 @@ WallpaperItem {
     }
     
     // ===== Renderer Instances =====
-    // Only one active at a time, selected by mqttRenderMode
+    // ClassicRenderer: used when MQTT is disabled
+    ClassicRenderer {
+        id: classicRenderer
+        fontSize: main.fontSize
+        baseColor: main.singleColor
+        jitter: main.jitter
+        glitchChance: main.glitchChance
+        palettes: main.palettes
+        paletteIndex: main.paletteIndex
+        colorMode: main.colorMode
+    }
     
+    // MQTT-based renderers: used when MQTT is enabled
     MixedModeRenderer {
         id: mixedRenderer
         fontSize: main.fontSize
@@ -163,8 +180,12 @@ WallpaperItem {
         fadeStrength: main.fadeStrength
         mqttEnable: main.mqttEnable
         
-        // Select active renderer based on mode
+        // Select active renderer: Classic if MQTT disabled, otherwise based on mode
         activeRenderer: {
+            if (!main.mqttEnable) {
+                return classicRenderer
+            }
+            
             switch(main.mqttRenderMode) {
                 case 0: return mixedRenderer
                 case 1: return mqttOnlyRenderer
@@ -187,7 +208,7 @@ WallpaperItem {
         reconnectInterval: main.mqttReconnectInterval
         messagesReceived: main.messagesReceived
         fadeStrength: main.fadeStrength
-        renderMode: main.renderModeNames[main.mqttRenderMode]
+        renderMode: main.getEffectiveRenderMode()
         messageHistory: main.messageHistory
         
         // Calculate active columns from renderer
@@ -217,13 +238,23 @@ WallpaperItem {
     onDebugOverlayChanged: matrixCanvas.requestPaint()
     
     onMqttRenderModeChanged: {
-        writeLog("🎭 Render mode changed to: " + renderModeNames[mqttRenderMode])
-        matrixCanvas.initDrops()
-        matrixCanvas.requestPaint()
+        if (mqttEnable) {
+            writeLog("🎭 Render mode changed to: " + renderModeNames[mqttRenderMode])
+            matrixCanvas.initDrops()
+            matrixCanvas.requestPaint()
+        }
     }
     
     onMqttEnableChanged: {
-        mqttEnable ? mqttConnect() : mqttClient.disconnectFromHost()
+        if (mqttEnable) {
+            writeLog("🎭 Switching to MQTT mode: " + renderModeNames[mqttRenderMode])
+            mqttConnect()
+        } else {
+            writeLog("🎭 Switching to Classic mode (MQTT disabled)")
+            mqttClient.disconnectFromHost()
+        }
+        matrixCanvas.initDrops()
+        matrixCanvas.requestPaint()
     }
     
     onMqttHostChanged: { if (mqttEnable) mqttConnect() }
@@ -238,17 +269,17 @@ WallpaperItem {
     // ===== Initialization =====
     Component.onCompleted: {
         writeLog("=== Matrix Rain MQTT Wallpaper ===")
-        writeLog("MQTT host=[" + mqttHost + "] port=" + mqttPort + " topic=[" + mqttTopic + "]")
-        writeLog("🔄 Reconnect interval: " + mqttReconnectInterval + "s")
-        writeLog("🎭 Render mode: " + renderModeNames[mqttRenderMode])
-        
-        matrixCanvas.initDrops()
         
         if (mqttEnable) {
+            writeLog("MQTT host=[" + mqttHost + "] port=" + mqttPort + " topic=[" + mqttTopic + "]")
+            writeLog("🔄 Reconnect interval: " + mqttReconnectInterval + "s")
+            writeLog("🎭 Render mode: " + renderModeNames[mqttRenderMode])
             Qt.callLater(mqttConnect)
         } else {
-            writeLog("MQTT disabled — random Matrix characters")
+            writeLog("🎭 Classic mode: Pure Matrix rain (MQTT disabled)")
         }
+        
+        matrixCanvas.initDrops()
     }
     
     Component.onDestruction: {
