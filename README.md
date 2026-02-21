@@ -1,6 +1,6 @@
 # Matrix Rain MQTT Wallpaper for KDE Plasma 6
 
-An MQTT-enabled "code rainfall" background wallpaper for Plasma 6 that displays incoming MQTT messages as falling Matrix-style characters with **JSON syntax highlighting** and **per-message stream rendering**. Perfect for visualizing IoT data, home automation events, or any MQTT stream in real-time on your desktop.
+An MQTT-enabled "code rainfall" background wallpaper for Plasma 6 that displays incoming MQTT messages as falling Matrix-style characters with **JSON syntax highlighting**, **per-message stream rendering**, and **multiple visualization modes**. Perfect for visualizing IoT data, home automation events, or any MQTT stream in real-time on your desktop.
 
 ![screenshot.png](screenshot.png)
 
@@ -14,16 +14,19 @@ An MQTT-enabled "code rainfall" background wallpaper for Plasma 6 that displays 
 - **Jitter effect** - Add randomness to character movement
 - **Glitch chance** - Random bright white characters for that authentic Matrix feel
 - **JSON syntax highlighting** - Automatically highlights JSON values brighter than keys/structure
-- **Multi-stream rendering** - Each MQTT message gets its own set of interleaved columns (up to 5 messages visible simultaneously)
 
-### MQTT Integration
+### MQTT Integration & Render Modes
+- **Three render modes** for different visualization styles:
+  - **Mixed Mode** (default): MQTT messages in random columns, Matrix characters in free columns
+  - **MQTT-Only Mode**: All columns loop through received messages, no random characters
+  - **MQTT-Driven Mode**: Columns activate only when messages arrive, dramatic burst effect
 - **Native MQTT protocol** - Direct TCP connection using Qt6 Mqtt module
 - **Live message display** - Incoming MQTT messages appear as falling characters
-- **Message history** - Last 5 messages rendered as separate interleaved streams
-- **Flexible configuration** - Set custom host, port, topic, and credentials
-- **Auto-reconnection** - Automatically reconnects on connection loss
-- **Debug overlay** - Optional on-screen debugging with last 5 messages, connection status, slot/char counts
-- **High performance** - C++ plugin with Qt6 integration
+- **Message history** - Recent messages rendered with configurable behavior per mode
+- **Flexible configuration** - Set custom host, port, topic, credentials, and render mode
+- **Auto-reconnection** - Automatically reconnects on connection loss with configurable interval
+- **Debug overlay** - Optional on-screen debugging with message history, connection status, and mode info
+- **High performance** - C++ plugin with Qt6 integration, optimized renderer architecture
 - **Full MQTT spec compliance** - QoS levels, authentication, wildcard topics
 - **Robust parsing** - Handles malformed JSON, null payloads, race conditions gracefully
 
@@ -153,8 +156,13 @@ module "ObsidianReq.MQTTRain" is not installed
 3. **MQTT Port** - MQTT TCP port (default: `1883`)
 4. **MQTT Topic** - Topic to subscribe to (supports wildcards like `zigbee2mqtt/#`)
 5. **Username/Password** - Optional authentication credentials
-6. **Debug Overlay** - Show connection status, message history, slot/char counts on screen
-7. **Debug MQTT logging** - Print full MQTT messages to the system journal (off by default)
+6. **Reconnect Interval** - Seconds between reconnection attempts (1-600s, default: 30s)
+7. **MQTT Render Mode** - Choose visualization style:
+   - **Mixed (MQTT + Random)**: Default mode, MQTT in columns when available, random Matrix chars otherwise
+   - **MQTT Only (Loop messages)**: All columns show messages from pool, no random chars
+   - **MQTT Driven (On message)**: Columns activate only when messages arrive, dramatic effect
+8. **Debug Overlay** - Show connection status, message history, render mode, statistics on screen
+9. **Debug MQTT logging** - Print full MQTT messages to the system journal (off by default)
 
 ### Example Configurations
 
@@ -165,6 +173,7 @@ Port: 1883
 Topic: zigbee2mqtt/#
 Username: mqtt_user
 Password: your_password
+Render Mode: Mixed (MQTT + Random)
 ```
 
 **Local Mosquitto (no auth):**
@@ -172,6 +181,7 @@ Password: your_password
 Host: localhost
 Port: 1883
 Topic: test/topic
+Render Mode: MQTT Driven (On message)
 ```
 
 **Public MQTT Broker (testing):**
@@ -179,48 +189,47 @@ Topic: test/topic
 Host: test.mosquitto.org
 Port: 1883
 Topic: test/#
+Render Mode: MQTT Only (Loop messages)
 ```
 
 ### Example Use Cases
 
-- **Home Automation**: Subscribe to `zigbee2mqtt/#` or `homeassistant/#` to see all your smart home events with JSON values highlighted
-- **IoT Monitoring**: Display sensor data from connected devices in real-time with color-coded payloads
-- **Development**: Debug MQTT applications visually with syntax-highlighted JSON
-- **Art Installation**: Create dynamic visual displays from live data streams
-- **System Monitoring**: Publish system stats to MQTT and visualize them
+- **Home Automation**: Subscribe to `zigbee2mqtt/#` with Mixed mode to see all smart home events
+- **IoT Monitoring**: Use MQTT-Driven mode for sparse sensor data to see clear message bursts
+- **Development**: Debug MQTT applications with MQTT-Only mode showing all recent messages
+- **Art Installation**: Create dynamic displays with custom render modes
+- **System Monitoring**: Visualize system stats with syntax-highlighted JSON
 
 ## Technical Details
 
 ### Architecture
 
-The wallpaper consists of two components:
+The wallpaper uses a **component-based architecture** with pluggable renderers:
 
-1. **C++ MQTT Plugin** (`plugin/`)
-   - Native Qt6 QML plugin
-   - Uses **Qt6 Mqtt module** for MQTT protocol implementation
+**Core Components:**
+- **main.qml**: Orchestration, configuration, MQTT client lifecycle (~200 lines)
+- **MatrixCanvas.qml**: Renderer-agnostic canvas, delegates to active renderer
+- **MQTTDebugOverlay.qml**: Extracted debug visualization component
+
+**Renderers** (Strategy Pattern):
+- **MixedModeRenderer**: Mixed MQTT + random characters
+- **MqttOnlyRenderer**: MQTT messages only, loop from pool
+- **MqttDrivenRenderer**: On-demand column activation
+
+**Utilities**:
+- **ColorUtils.js**: Color manipulation (lighten for value highlighting)
+- **MatrixRainLogic.js**: JSON parsing, message building, column assignment
+
+**See [package/contents/ui/ARCHITECTURE.md](package/contents/ui/ARCHITECTURE.md) for complete architecture documentation.**
+
+### C++ MQTT Plugin
+
+1. **Native Qt6 QML plugin** (`plugin/`)
+   - Uses **Qt6 Mqtt module** for MQTT protocol
+   - Direct TCP connection via `QTcpSocket` as `IODevice` transport
    - Exposes `MQTTClient` type to QML
-   - Direct TCP connection using `QTcpSocket` as `IODevice` transport
-   - Emits `messageReceived(topic, payload)` signals to QML
-
-2. **QML Wallpaper** (`package/`)
-   - Canvas-based Matrix rain rendering
-   - Multi-stream architecture: each history slot owns interleaved columns
-   - JSON syntax highlighting state machine
-   - Configurable visual effects with real-time updates
-   - Robust error handling for malformed payloads
-
-**See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full technical details.**
-
-### Rendering Pipeline
-
-1. MQTT message arrives → `onMessageReceived(topic, payload)`
-2. Message pushed to `messageHistory[]` (max 5, newest first)
-3. `rebuildHistoryChars()` generates `messageHistoryChars[][]`
-   - Each slot = `buildDisplayChars(topic, payload)` → `[{ch, isValue}, ...]`
-   - JSON payloads → `colorJsonChars()` state machine tags values as `isValue: true`
-4. Paint loop: column `i` reads from slot `i % nSlots`
-   - `isValue: false` → base palette color (keys, structural chars)
-   - `isValue: true` → `lightenColor(baseColor, 0.55)` (values)
+   - Automatic reconnection with configurable interval
+   - Emits `messageReceived(topic, payload)` and `reconnecting()` signals
 
 ### Requirements
 
@@ -264,20 +273,21 @@ module "ObsidianReq.MQTTRain" is not installed
 - Re-run `./install.sh`
 
 **Connection fails / no characters:**
-- Enable debug overlay to see connection status on screen
+- Enable debug overlay to see connection status and render mode
 - Enable "Debug MQTT logging" and check `journalctl -f | grep MQTTRain`
 - Test broker directly: `mosquitto_sub -h <host> -p 1883 -t '#' -v`
 - Verify credentials and firewall rules
+- Try different render modes
 
 **Build errors:**
 - Ensure `qt6-mqtt` is installed
 - Check Qt6 version: `qmake6 --version`
 - Verify Qt6 Mqtt: `find /usr/lib* -name "libQt6Mqtt.so*"`
 
-**JSON not highlighted / values same color as keys:**
-- This is a feature, not a bug! Check that color mode is set correctly
-- JSON values should be ~55% brighter than keys/structure
-- Try different palettes (Neon/Cyberpunk/Synthwave) to see the effect more clearly
+**Wrong render mode behavior:**
+- Check debug overlay shows correct mode name
+- Look for "🎭 Render mode changed to: ..." in logs
+- Verify `mqttRenderMode` in configuration
 
 ## Development
 
@@ -298,11 +308,21 @@ matrixrain-plasma6/
 │       ├── config/
 │       │   └── main.xml         # Config keys and defaults
 │       └── ui/
-│           ├── main.qml         # Wallpaper logic + Matrix rendering
-│           └── config.qml       # Settings UI
+│           ├── main.qml         # Main orchestration
+│           ├── config.qml       # Settings UI
+│           ├── components/      # Reusable UI components
+│           │   ├── MatrixCanvas.qml
+│           │   └── MQTTDebugOverlay.qml
+│           ├── renderers/       # Render mode strategies
+│           │   ├── MixedModeRenderer.qml
+│           │   ├── MqttOnlyRenderer.qml
+│           │   └── MqttDrivenRenderer.qml
+│           ├── utils/           # JavaScript utilities
+│           │   ├── ColorUtils.js
+│           │   └── MatrixRainLogic.js
+│           └── ARCHITECTURE.md  # Architecture documentation
 ├── docs/
-│   ├── mqtt-specs.md            # MQTT payload format specs (HA, Z2M)
-│   └── ARCHITECTURE.md          # Full technical architecture
+│   └── mqtt-specs.md            # MQTT payload format specs
 ├── .github/
 │   └── copilot-instructions.md  # AI agent guidelines
 ├── install.sh
@@ -312,23 +332,24 @@ matrixrain-plasma6/
 
 ### Adding Features
 
+**To add a new render mode:**
+1. Create `package/contents/ui/renderers/MyRenderer.qml`
+2. Implement renderer interface (see ARCHITECTURE.md)
+3. Instantiate in `main.qml`
+4. Add to `activeRenderer` switch
+5. Update `main.xml` range and `config.qml` ComboBox
+
 **To modify MQTT behavior:** edit `plugin/mqttclient.cpp`, then rebuild:
 ```bash
 cd plugin/build && make -j$(nproc)
 cp libmqttrainplugin.so ~/.local/lib/qt6/qml/ObsidianReq/MQTTRain/
 ```
 
-**To modify visual effects:** edit `package/contents/ui/main.qml`, then:
+**To modify visual effects:** edit renderer files or canvas, then:
 ```bash
-cp package/contents/ui/main.qml ~/.local/share/plasma/wallpapers/obsidianreq.plasma.wallpaper.mqttrain/contents/ui/
+kpackagetool6 --type Plasma/Wallpaper --upgrade package
 plasmashell --replace &
 ```
-
-**To add config options:**
-1. Add entry to `package/contents/config/main.xml`
-2. Add UI control to `package/contents/ui/config.qml` with `cfg_<key>` alias
-3. Read in `main.qml` via `main.configuration.<key>`
-4. Reinstall: `kpackagetool6 --type Plasma/Wallpaper --upgrade package`
 
 ## License
 
@@ -337,7 +358,7 @@ GPL v3 - See [LICENSE](LICENSE) file
 ## Credits
 
 Original Matrix Rain wallpaper by [obsidianreq](https://github.com/obsidianreq)  
-Native MQTT integration, JSON highlighting, multi-stream rendering by [savino](https://github.com/savino)
+Native MQTT integration, JSON highlighting, multi-mode rendering by [savino](https://github.com/savino)
 
 ## Acknowledgments
 
