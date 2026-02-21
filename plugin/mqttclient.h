@@ -46,6 +46,7 @@ signals:
     void topicChanged();
     void connectedChanged();
     void reconnectIntervalChanged();
+    void reconnecting();
     void messageReceived(const QString &topic, const QString &payload);
     void connectionError(const QString &error);
 
