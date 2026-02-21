@@ -21,6 +21,7 @@ ColumnLayout {
     property alias cfg_mqttPort:      mqttPort.value
     property alias cfg_mqttPath:      mqttPath.text
     property alias cfg_mqttTopic:     mqttTopic.text
+    property alias cfg_mqttTopicBlacklist: mqttTopicBlacklist.text
     property alias cfg_mqttUsername:  mqttUsername.text
     property alias cfg_mqttPassword:  mqttPassword.text
     property alias cfg_mqttReconnectInterval: mqttReconnectIntervalSpin.value
@@ -174,6 +175,20 @@ ColumnLayout {
                 enabled: mqttEnable.checked
                 placeholderText: "zigbee2mqtt/#"
                 KirigamiLayouts.FormData.label: qsTr("MQTT Topic")
+            }
+            
+            QC.TextField {
+                id: mqttTopicBlacklist
+                enabled: mqttEnable.checked
+                placeholderText: qsTr("bridge/log,availability")
+                KirigamiLayouts.FormData.label: qsTr("Topic Blacklist")
+            }
+            
+            QC.Label {
+                text: qsTr("Comma-separated list of topics to ignore")
+                font.italic: true
+                opacity: 0.7
+                wrapMode: Text.WordWrap
             }
             
             QC.Label {
