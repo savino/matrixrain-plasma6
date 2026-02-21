@@ -51,22 +51,31 @@ Item {
                 newActive.push(targetCol)
                 activeColumns = newActive
                 console.log("[MqttDrivenRenderer] activated column " + targetCol + ", total active: " + newActive.length)
+            } else {
+                console.log("[MqttDrivenRenderer] reactivated column " + targetCol + " (was already active)")
             }
         }
     }
     
     /**
-     * Find an available column (inactive or least recent)
+     * Find an available column (random from inactive, or random from all)
      */
     function findAvailableColumn() {
-        // First pass: find inactive column
+        // Build list of inactive columns
+        var inactiveCols = []
         for (var i = 0; i < columns; i++) {
             if (columnAssignments[i] === null || !columnAssignments[i].active) {
-                return i
+                inactiveCols.push(i)
             }
         }
         
-        // All active: pick random to replace
+        // Pick random from inactive
+        if (inactiveCols.length > 0) {
+            var randomIdx = Math.floor(Math.random() * inactiveCols.length)
+            return inactiveCols[randomIdx]
+        }
+        
+        // All active: pick random column to replace
         return Math.floor(Math.random() * columns)
     }
     
