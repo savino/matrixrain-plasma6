@@ -27,7 +27,14 @@ Item {
      */
     function assignMessage(topic, payload) {
         var chars = Logic.buildDisplayChars(topic, payload)
-        Logic.assignMessageToColumn(chars, columnAssignments, 3)
+        
+        console.log("[MixedModeRenderer] assignMessage: topic=" + topic + ", chars.length=" + chars.length)
+        
+        // Logic.assignMessageToColumn mutates the array in-place
+        // We need to clone, mutate, then reassign to trigger property change
+        var newCA = columnAssignments.slice()
+        Logic.assignMessageToColumn(chars, newCA, 3)
+        columnAssignments = newCA
     }
     
     /**
@@ -95,11 +102,16 @@ Item {
      */
     function onColumnWrap(columnIndex) {
         if (columnAssignments[columnIndex] !== null) {
-            columnAssignments[columnIndex].passesLeft -= 1
-            if (columnAssignments[columnIndex].passesLeft <= 0) {
+            // Clone array to trigger property change
+            var newCA = columnAssignments.slice()
+            newCA[columnIndex].passesLeft -= 1
+            
+            if (newCA[columnIndex].passesLeft <= 0) {
                 // Free the column
-                columnAssignments[columnIndex] = null
+                newCA[columnIndex] = null
             }
+            
+            columnAssignments = newCA
         }
     }
     
@@ -108,6 +120,8 @@ Item {
      * @param numColumns - Number of columns
      */
     function initializeColumns(numColumns) {
+        console.log("[MixedModeRenderer] initializeColumns: numColumns=" + numColumns)
+        
         var newCA = []
         for (var i = 0; i < numColumns; i++) {
             newCA.push(null)
