@@ -32,17 +32,22 @@ Item {
     function assignMessage(topic, payload) {
         var chars = Logic.buildDisplayChars(topic, payload)
         
+        console.log("[MqttOnlyRenderer] assignMessage: topic=" + topic + ", chars.length=" + chars.length)
+        
         // Add to message pool
-        messagePool.push({
+        var newPool = messagePool.slice() // Copy array
+        newPool.push({
             topic: topic,
             payload: payload,
             chars: chars
         })
         
         // Limit pool size
-        if (messagePool.length > messagePoolSize) {
-            messagePool.shift() // Remove oldest
+        if (newPool.length > messagePoolSize) {
+            newPool.shift() // Remove oldest
         }
+        
+        messagePool = newPool // Trigger property change
         
         // Redistribute messages across all columns
         redistributeMessages()
@@ -50,17 +55,30 @@ Item {
     
     /**
      * Distribute messages from pool to all columns
+     * CRITICAL: Must create NEW array, not mutate existing one
      */
     function redistributeMessages() {
-        if (messagePool.length === 0) return
+        if (messagePool.length === 0) {
+            console.log("[MqttOnlyRenderer] redistributeMessages: pool empty")
+            return
+        }
         
+        console.log("[MqttOnlyRenderer] redistributeMessages: pool.length=" + messagePool.length + ", columns=" + columns)
+        
+        // Create NEW array (QML property system requirement)
+        var newCA = []
         for (var i = 0; i < columns; i++) {
             var msgIndex = i % messagePool.length
-            columnAssignments[i] = {
+            newCA.push({
                 chars: messagePool[msgIndex].chars,
                 passesLeft: 999999 // Never free
-            }
+            })
         }
+        
+        // Replace array to trigger property notification
+        columnAssignments = newCA
+        
+        console.log("[MqttOnlyRenderer] redistributeMessages: assigned " + newCA.length + " columns")
     }
     
     /**
@@ -112,6 +130,8 @@ Item {
      * Initialize column assignments
      */
     function initializeColumns(numColumns) {
+        console.log("[MqttOnlyRenderer] initializeColumns: numColumns=" + numColumns)
+        
         var newCA = []
         for (var i = 0; i < numColumns; i++) {
             newCA.push(null)
@@ -121,6 +141,7 @@ Item {
         
         // Redistribute existing messages if any
         if (messagePool.length > 0) {
+            console.log("[MqttOnlyRenderer] initializeColumns: redistributing existing " + messagePool.length + " messages")
             redistributeMessages()
         }
     }
