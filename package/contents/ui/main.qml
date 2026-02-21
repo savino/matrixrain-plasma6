@@ -27,6 +27,7 @@ WallpaperItem {
     property string mqttUsername: (main.configuration.mqttUsername || "").trim()
     property string mqttPassword: (main.configuration.mqttPassword !== undefined && main.configuration.mqttPassword !== null) ? main.configuration.mqttPassword : ""
     property bool   mqttDebug:    main.configuration.mqttDebug    !== undefined ? main.configuration.mqttDebug    : false
+    property int    mqttReconnectInterval: main.configuration.mqttReconnectInterval !== undefined ? main.configuration.mqttReconnectInterval : 30
 
     // State
     // messageHistory:    [{topic, payload}, ...]  newest first, max maxHistory (debug overlay only)
@@ -186,14 +187,19 @@ WallpaperItem {
 
     MQTTClient {
         id: mqttClient
+        reconnectInterval: main.mqttReconnectInterval * 1000
 
         onConnectedChanged: {
             if (connected) {
                 main.writeLog("✅ MQTT Connected")
             } else {
                 main.writeLog("❌ MQTT Disconnected")
-                if (main.mqttEnable) reconnectTimer.start()
             }
+            canvas.requestPaint()
+        }
+
+        onReconnecting: {
+            main.writeLog("🔄 MQTT reconnecting in " + main.mqttReconnectInterval + "s...")
             canvas.requestPaint()
         }
 
@@ -226,17 +232,6 @@ WallpaperItem {
         mqttClient.password = main.mqttPassword
         mqttClient.topic    = main.mqttTopic.trim()
         mqttClient.connectToHost()
-    }
-
-    Timer {
-        id: reconnectTimer
-        interval: 5000; repeat: false
-        onTriggered: {
-            if (main.mqttEnable && !mqttClient.connected) {
-                main.writeLog("🔄 Reconnecting...")
-                mqttConnect()
-            }
-        }
     }
 
     Canvas {
@@ -341,7 +336,7 @@ WallpaperItem {
 
             // Debug overlay
             if (main.debugOverlay) {
-                var BOX_X = 8, BOX_Y = 8, BOX_W = 760, BOX_H = 222
+                var BOX_X = 8, BOX_Y = 8, BOX_W = 760, BOX_H = 238
                 var TX = 14, LINE = 16
 
                 ctx.fillStyle = "rgba(0,0,0,0.88)"
@@ -365,15 +360,18 @@ WallpaperItem {
                              + "  |  Active cols: " + activeCols
                              + "  |  Total cols: " + (ca ? ca.length : 0)
                              + "  |  Fade: " + main.fadeStrength.toFixed(2), TX, 94)
+                
+                ctx.fillStyle = "#ffaa00"
+                ctx.fillText("🔄 Reconnect: " + main.mqttReconnectInterval + "s", TX, 110)
 
                 ctx.fillStyle = "#555555"
-                ctx.fillRect(TX, 103, BOX_W - 20, 1)
+                ctx.fillRect(TX, 119, BOX_W - 20, 1)
                 ctx.fillStyle = "#888888"
-                ctx.fillText("Recent messages (newest first):", TX, 116)
+                ctx.fillText("Recent messages (newest first):", TX, 132)
 
                 var alphas = ["#ffff00","#cccc00","#999900","#666600","#444400"]
                 var hist = main.messageHistory
-                var baseY = 132
+                var baseY = 148
 
                 if (hist.length === 0) {
                     ctx.fillStyle = "#555555"
@@ -413,6 +411,7 @@ WallpaperItem {
         main.writeLog("=== Matrix Rain MQTT Wallpaper ===")
         main.writeLog("MQTT host=[" + main.mqttHost + "] port=" + main.mqttPort
                       + " topic=[" + main.mqttTopic + "]")
+        main.writeLog("🔄 Reconnect interval: " + main.mqttReconnectInterval + "s")
         canvas.initDrops()
         if (main.mqttEnable) Qt.callLater(mqttConnect)
         else main.writeLog("MQTT disabled — random Matrix characters")
