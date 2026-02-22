@@ -39,7 +39,7 @@ Item {
     // Rebuilt whenever activeMessages changes
     property var protectedCells: ({})
 
-    // ---- Canvas dimensions (set by initializeColumns) ----
+    // ---- Canvas dimensions (set by MatrixCanvas before initializeColumns) ----
     property int canvasWidth:  0
     property int canvasHeight: 0
 
@@ -72,6 +72,7 @@ Item {
                 lines.push(p)
             }
         } catch(e) {
+            console.log("[HorizontalOverlayRenderer] JSON parse error: " + e)
             lines.push(p)
         }
 
@@ -99,6 +100,7 @@ Item {
             }
         }
         protectedCells = cells
+        console.log("[HorizontalOverlayRenderer] rebuildProtectedCells: " + Object.keys(cells).length + " cells protected")
     }
 
     // ------------------------------------------------------------------
@@ -114,6 +116,7 @@ Item {
             }
         }
         if (kept.length !== msgs.length) {
+            console.log("[HorizontalOverlayRenderer] purgeExpired: removed " + (msgs.length - kept.length) + " messages")
             activeMessages = kept
             rebuildProtectedCells()
         }
@@ -123,9 +126,13 @@ Item {
     // Called by main.qml when an MQTT message arrives
     // ------------------------------------------------------------------
     function assignMessage(topic, payload) {
+        console.log("[HorizontalOverlayRenderer] assignMessage called: topic=" + topic + ", payload length=" + payload.length)
+        console.log("[HorizontalOverlayRenderer] canvasWidth=" + canvasWidth + ", canvasHeight=" + canvasHeight + ", columns=" + columns)
+        
         purgeExpired()
 
         var lines = prettyLines(topic, payload)
+        console.log("[HorizontalOverlayRenderer] prettyLines returned " + lines.length + " lines")
         if (lines.length === 0) return
 
         // Measure block size in grid cells
@@ -136,24 +143,40 @@ Item {
         var blockRows = lines.length
 
         // Total grid dimensions
-        var gridCols = (canvasWidth  > 0 && fontSize > 0) ? Math.floor(canvasWidth  / fontSize) : columns
-        var gridRows = (canvasHeight > 0 && fontSize > 0) ? Math.floor(canvasHeight / fontSize) : 20
+        // Fallback to columns property if canvasWidth is not set
+        var gridCols = (canvasWidth > 0 && fontSize > 0) 
+            ? Math.floor(canvasWidth / fontSize) 
+            : columns
+        var gridRows = (canvasHeight > 0 && fontSize > 0) 
+            ? Math.floor(canvasHeight / fontSize) 
+            : 40  // reasonable fallback
 
-        if (gridCols <= 0 || gridRows <= 0) return
+        console.log("[HorizontalOverlayRenderer] grid: " + gridCols + "x" + gridRows + ", block: " + blockCols + "x" + blockRows)
+
+        if (gridCols <= 0 || gridRows <= 0) {
+            console.log("[HorizontalOverlayRenderer] ERROR: invalid grid dimensions")
+            return
+        }
 
         // Clamp block so it fits on screen
         var maxCol = Math.max(0, gridCols - blockCols)
         var maxRow = Math.max(0, gridRows - blockRows)
 
+        if (maxCol < 0 || maxRow < 0) {
+            console.log("[HorizontalOverlayRenderer] WARNING: message too large for screen")
+            maxCol = Math.max(0, maxCol)
+            maxRow = Math.max(0, maxRow)
+        }
+
         // Try to find a position that doesn't heavily overlap existing messages
-        var bestCol = Math.floor(Math.random() * (maxCol + 1))
-        var bestRow = Math.floor(Math.random() * (maxRow + 1))
+        var bestCol = (maxCol > 0) ? Math.floor(Math.random() * (maxCol + 1)) : 0
+        var bestRow = (maxRow > 0) ? Math.floor(Math.random() * (maxRow + 1)) : 0
         var attempts = 12
         var minOverlap = 999999
 
         for (var a = 0; a < attempts; a++) {
-            var tryCol = Math.floor(Math.random() * (maxCol + 1))
-            var tryRow = Math.floor(Math.random() * (maxRow + 1))
+            var tryCol = (maxCol > 0) ? Math.floor(Math.random() * (maxCol + 1)) : 0
+            var tryRow = (maxRow > 0) ? Math.floor(Math.random() * (maxRow + 1)) : 0
             var overlap = 0
             for (var r = 0; r < blockRows; r++) {
                 for (var c = 0; c < blockCols; c++) {
@@ -184,8 +207,9 @@ Item {
         activeMessages = newList
         rebuildProtectedCells()
 
-        console.log("[HorizontalOverlayRenderer] placed message at col=" + bestCol +
-                    " row=" + bestRow + " size=" + blockCols + "x" + blockRows)
+        console.log("[HorizontalOverlayRenderer] ✅ placed message at col=" + bestCol +
+                    " row=" + bestRow + " size=" + blockCols + "x" + blockRows + 
+                    ", active messages=" + activeMessages.length)
     }
 
     // ------------------------------------------------------------------
@@ -238,7 +262,8 @@ Item {
     // Initialize
     // ------------------------------------------------------------------
     function initializeColumns(numColumns) {
-        console.log("[HorizontalOverlayRenderer] initializeColumns: " + numColumns)
+        console.log("[HorizontalOverlayRenderer] initializeColumns: " + numColumns + 
+                    ", canvasWidth=" + canvasWidth + ", canvasHeight=" + canvasHeight)
         var newCA = []
         for (var i = 0; i < numColumns; i++) newCA.push(null)
         columnAssignments = newCA
@@ -253,5 +278,10 @@ Item {
         running:  true
         repeat:   true
         onTriggered: renderer.purgeExpired()
+    }
+
+    Component.onCompleted: {
+        console.log("[HorizontalOverlayRenderer] Component completed: fontSize=" + fontSize + 
+                    ", displayDuration=" + displayDuration + "ms")
     }
 }
