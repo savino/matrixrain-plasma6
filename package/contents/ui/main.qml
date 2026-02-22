@@ -12,230 +12,224 @@ import "renderers"
 WallpaperItem {
     id: main
     anchors.fill: parent
-    
+
     // ===== Configuration Properties =====
-    property int fontSize: main.configuration.fontSize !== undefined ? main.configuration.fontSize : 16
-    property int speed: main.configuration.speed !== undefined ? main.configuration.speed : 50
-    property real fadeStrength: (main.configuration.fadeStrength !== undefined ? main.configuration.fadeStrength : 5) / 100.0
-    property int colorMode: main.configuration.colorMode !== undefined ? main.configuration.colorMode : 0
+    property int   fontSize:    main.configuration.fontSize    !== undefined ? main.configuration.fontSize    : 16
+    property int   speed:       main.configuration.speed       !== undefined ? main.configuration.speed       : 50
+    property real  fadeStrength: (main.configuration.fadeStrength !== undefined ? main.configuration.fadeStrength : 5) / 100.0
+    property int   colorMode:   main.configuration.colorMode   !== undefined ? main.configuration.colorMode   : 0
     property color singleColor: main.configuration.singleColor !== undefined ? main.configuration.singleColor : "#00ff00"
-    property int paletteIndex: main.configuration.paletteIndex !== undefined ? main.configuration.paletteIndex : 0
-    property real jitter: main.configuration.jitter !== undefined ? main.configuration.jitter : 0
-    property int glitchChance: main.configuration.glitchChance !== undefined ? main.configuration.glitchChance : 1
-    
+    property int   paletteIndex: main.configuration.paletteIndex !== undefined ? main.configuration.paletteIndex : 0
+    property real  jitter:      main.configuration.jitter      !== undefined ? main.configuration.jitter      : 0
+    property int   glitchChance: main.configuration.glitchChance !== undefined ? main.configuration.glitchChance : 1
+
     // MQTT settings
-    property bool mqttEnable: main.configuration.mqttEnable !== undefined ? main.configuration.mqttEnable : false
-    property string mqttHost: (main.configuration.mqttHost !== undefined ? main.configuration.mqttHost : "homeassistant.lan").trim()
-    property int mqttPort: main.configuration.mqttPort !== undefined ? main.configuration.mqttPort : 1883
-    property string mqttTopic: (main.configuration.mqttTopic !== undefined ? main.configuration.mqttTopic : "zigbee2mqtt/#").trim()
+    property bool   mqttEnable:   main.configuration.mqttEnable   !== undefined ? main.configuration.mqttEnable   : false
+    property string mqttHost:     (main.configuration.mqttHost     !== undefined ? main.configuration.mqttHost     : "homeassistant.lan").trim()
+    property int    mqttPort:     main.configuration.mqttPort      !== undefined ? main.configuration.mqttPort      : 1883
+    property string mqttTopic:    (main.configuration.mqttTopic    !== undefined ? main.configuration.mqttTopic    : "zigbee2mqtt/#").trim()
     property string mqttTopicBlacklist: (main.configuration.mqttTopicBlacklist !== undefined ? main.configuration.mqttTopicBlacklist : "").trim()
     property string mqttUsername: (main.configuration.mqttUsername || "").trim()
     property string mqttPassword: (main.configuration.mqttPassword !== undefined && main.configuration.mqttPassword !== null) ? main.configuration.mqttPassword : ""
-    property bool mqttDebug: main.configuration.mqttDebug !== undefined ? main.configuration.mqttDebug : false
-    property int mqttReconnectInterval: main.configuration.mqttReconnectInterval !== undefined ? main.configuration.mqttReconnectInterval : 30
-    property int mqttRenderMode: main.configuration.mqttRenderMode !== undefined ? main.configuration.mqttRenderMode : 0
-    
+    property bool   mqttDebug:    main.configuration.mqttDebug    !== undefined ? main.configuration.mqttDebug    : false
+    property int    mqttReconnectInterval: main.configuration.mqttReconnectInterval !== undefined ? main.configuration.mqttReconnectInterval : 30
+    property int    mqttRenderMode: main.configuration.mqttRenderMode !== undefined ? main.configuration.mqttRenderMode : 0
+
     // Debug
     property bool debugOverlay: main.configuration.debugOverlay !== undefined ? main.configuration.debugOverlay : false
-    
+
     // State tracking
     property var messageHistory: []
     property int messagesReceived: 0
     readonly property int maxHistory: 5
-    
+
     // Color palettes
     property var palettes: [
         ["#00ff00", "#ff00ff", "#00ffff", "#ff0000", "#ffff00", "#0000ff"],
         ["#ff0066", "#33ff99", "#ffcc00", "#6600ff", "#00ccff", "#ff3300"],
         ["#ff00ff", "#00ffcc", "#cc00ff", "#ffcc33", "#33ccff", "#ccff00"]
     ]
-    
+
     // Render mode names for debug
-    readonly property var renderModeNames: ["Mixed", "MQTT-Only", "MQTT-Driven"]
-    
+    readonly property var renderModeNames: ["Mixed", "MQTT-Only", "MQTT-Driven", "Horizontal Overlay"]
+
     // ===== Utility Functions =====
-    function writeLog(msg) { console.log("[MQTTRain] " + msg) }
+    function writeLog(msg)   { console.log("[MQTTRain] " + msg) }
     function writeDebug(msg) { if (mqttDebug) console.log("[MQTTRain][debug] " + msg) }
-    
-    // Current effective render mode name (including Classic)
+
     function getEffectiveRenderMode() {
         if (!mqttEnable) return "Classic"
         return renderModeNames[mqttRenderMode]
     }
-    
+
     // Check if topic should be filtered based on blacklist
     function shouldFilterTopic(topic) {
-        if (!mqttTopicBlacklist || mqttTopicBlacklist.length === 0) {
-            return false
-        }
-        
+        if (!mqttTopicBlacklist || mqttTopicBlacklist.length === 0) return false
         var blacklistItems = mqttTopicBlacklist.split(',')
         for (var i = 0; i < blacklistItems.length; i++) {
             var item = blacklistItems[i].trim()
             if (item.length > 0 && topic.indexOf(item) !== -1) {
-                writeDebug("🚫 Filtered topic: " + topic + " (matches: " + item + ")")
+                writeDebug("\uD83D\uDEAB Filtered topic: " + topic + " (matches: " + item + ")")
                 return true
             }
         }
         return false
     }
-    
+
     // ===== MQTT Client =====
     MQTTClient {
         id: mqttClient
         reconnectInterval: main.mqttReconnectInterval * 1000
-        
+
         onConnectedChanged: {
-            if (connected) {
-                writeLog("✅ MQTT Connected")
-            } else {
-                writeLog("❌ MQTT Disconnected")
-            }
+            if (connected) writeLog("\u2705 MQTT Connected")
+            else           writeLog("\u274C MQTT Disconnected")
         }
-        
+
         onReconnecting: {
-            writeLog("🔄 MQTT reconnecting in " + main.mqttReconnectInterval + "s...")
+            writeLog("\uD83D\uDD04 MQTT reconnecting in " + main.mqttReconnectInterval + "s...")
         }
-        
+
         onMessageReceived: function(topic, payload) {
-            var safeTopic = (topic != null && topic !== undefined) ? topic.toString() : ""
+            var safeTopic   = (topic   != null && topic   !== undefined) ? topic.toString()   : ""
             var safePayload = (payload != null && payload !== undefined) ? payload.toString() : ""
-            
-            writeDebug("📨 [" + safeTopic + "] " + safePayload)
-            
+
+            writeDebug("\uD83D\uDCE8 [" + safeTopic + "] " + safePayload)
+
             // Filter blacklisted topics
-            if (shouldFilterTopic(safeTopic)) {
-                return  // Discard the message
-            }
-            
+            if (shouldFilterTopic(safeTopic)) return
+
             messagesReceived++
-            
+
             // Update message history for debug overlay
             var hist = messageHistory.slice()
             hist.unshift({ topic: safeTopic, payload: safePayload })
-            if (hist.length > maxHistory) {
-                hist = hist.slice(0, maxHistory)
-            }
+            if (hist.length > maxHistory) hist = hist.slice(0, maxHistory)
             messageHistory = hist
-            
-            // Delegate to active renderer (only if MQTT enabled)
+
+            // Delegate to active renderer
             if (mqttEnable && matrixCanvas.activeRenderer) {
                 matrixCanvas.activeRenderer.assignMessage(safeTopic, safePayload)
                 matrixCanvas.requestPaint()
             }
         }
-        
+
         onConnectionError: function(error) {
-            writeLog("❌ MQTT Error: " + error)
+            writeLog("\u274C MQTT Error: " + error)
         }
     }
-    
+
     // ===== MQTT Connection Management =====
     function mqttConnect() {
         if (!mqttEnable) {
             mqttClient.disconnectFromHost()
             return
         }
-        
         writeLog("Connecting to " + mqttHost + ":" + mqttPort + " topic=[" + mqttTopic + "]")
-        mqttClient.host = mqttHost.trim()
-        mqttClient.port = mqttPort
+        mqttClient.host     = mqttHost.trim()
+        mqttClient.port     = mqttPort
         mqttClient.username = mqttUsername.trim()
         mqttClient.password = mqttPassword
-        mqttClient.topic = mqttTopic.trim()
+        mqttClient.topic    = mqttTopic.trim()
         mqttClient.connectToHost()
     }
-    
+
     // ===== Renderer Instances =====
-    // ClassicRenderer: used when MQTT is disabled
     ClassicRenderer {
         id: classicRenderer
-        fontSize: main.fontSize
-        baseColor: main.singleColor
-        jitter: main.jitter
+        fontSize:    main.fontSize
+        baseColor:   main.singleColor
+        jitter:      main.jitter
         glitchChance: main.glitchChance
-        palettes: main.palettes
+        palettes:    main.palettes
         paletteIndex: main.paletteIndex
-        colorMode: main.colorMode
+        colorMode:   main.colorMode
     }
-    
-    // MQTT-based renderers: used when MQTT is enabled
+
     MixedModeRenderer {
         id: mixedRenderer
-        fontSize: main.fontSize
-        baseColor: main.singleColor
-        jitter: main.jitter
+        fontSize:    main.fontSize
+        baseColor:   main.singleColor
+        jitter:      main.jitter
         glitchChance: main.glitchChance
-        palettes: main.palettes
+        palettes:    main.palettes
         paletteIndex: main.paletteIndex
-        colorMode: main.colorMode
+        colorMode:   main.colorMode
     }
-    
+
     MqttOnlyRenderer {
         id: mqttOnlyRenderer
-        fontSize: main.fontSize
-        baseColor: main.singleColor
-        jitter: main.jitter
+        fontSize:    main.fontSize
+        baseColor:   main.singleColor
+        jitter:      main.jitter
         glitchChance: main.glitchChance
-        palettes: main.palettes
+        palettes:    main.palettes
         paletteIndex: main.paletteIndex
-        colorMode: main.colorMode
+        colorMode:   main.colorMode
         messagePoolSize: 20
     }
-    
+
     MqttDrivenRenderer {
         id: mqttDrivenRenderer
-        fontSize: main.fontSize
-        baseColor: main.singleColor
-        jitter: main.jitter
+        fontSize:    main.fontSize
+        baseColor:   main.singleColor
+        jitter:      main.jitter
         glitchChance: main.glitchChance
-        palettes: main.palettes
+        palettes:    main.palettes
         paletteIndex: main.paletteIndex
-        colorMode: main.colorMode
+        colorMode:   main.colorMode
     }
-    
+
+    HorizontalOverlayRenderer {
+        id: horizontalOverlayRenderer
+        fontSize:       main.fontSize
+        baseColor:      main.singleColor
+        jitter:         main.jitter
+        glitchChance:   main.glitchChance
+        palettes:       main.palettes
+        paletteIndex:   main.paletteIndex
+        colorMode:      main.colorMode
+        displayDuration: 3000
+    }
+
     // ===== Matrix Canvas =====
     MatrixCanvas {
         id: matrixCanvas
         anchors.fill: parent
-        
-        fontSize: main.fontSize
-        speed: main.speed
+
+        fontSize:     main.fontSize
+        speed:        main.speed
         fadeStrength: main.fadeStrength
-        mqttEnable: main.mqttEnable
-        
-        // Select active renderer: Classic if MQTT disabled, otherwise based on mode
+        mqttEnable:   main.mqttEnable
+
         activeRenderer: {
-            if (!main.mqttEnable) {
-                return classicRenderer
-            }
-            
-            switch(main.mqttRenderMode) {
-                case 0: return mixedRenderer
-                case 1: return mqttOnlyRenderer
-                case 2: return mqttDrivenRenderer
+            if (!main.mqttEnable) return classicRenderer
+            switch (main.mqttRenderMode) {
+                case 0:  return mixedRenderer
+                case 1:  return mqttOnlyRenderer
+                case 2:  return mqttDrivenRenderer
+                case 3:  return horizontalOverlayRenderer
                 default: return mixedRenderer
             }
         }
     }
-    
+
     // ===== Debug Overlay =====
     MQTTDebugOverlay {
         id: debugOverlay
         anchors.fill: parent
-        
-        debugEnabled: main.debugOverlay
-        mqttConnected: mqttClient.connected
-        mqttHost: main.mqttHost
-        mqttPort: main.mqttPort
-        mqttTopic: main.mqttTopic
+
+        debugEnabled:     main.debugOverlay
+        mqttConnected:    mqttClient.connected
+        mqttHost:         main.mqttHost
+        mqttPort:         main.mqttPort
+        mqttTopic:        main.mqttTopic
         reconnectInterval: main.mqttReconnectInterval
         messagesReceived: main.messagesReceived
-        fadeStrength: main.fadeStrength
-        renderMode: main.getEffectiveRenderMode()
-        messageHistory: main.messageHistory
-        
-        // Calculate active columns from renderer
+        fadeStrength:     main.fadeStrength
+        renderMode:       main.getEffectiveRenderMode()
+        messageHistory:   main.messageHistory
+
         activeColumns: {
             if (!matrixCanvas.activeRenderer) return 0
             var ca = matrixCanvas.activeRenderer.columnAssignments
@@ -246,73 +240,70 @@ WallpaperItem {
             }
             return count
         }
-        
+
         totalColumns: matrixCanvas.activeRenderer ? matrixCanvas.activeRenderer.columns : 0
     }
-    
+
     // ===== Configuration Change Handlers =====
-    onFontSizeChanged: matrixCanvas.initDrops()
-    onSpeedChanged: matrixCanvas.requestPaint()
+    onFontSizeChanged:    matrixCanvas.initDrops()
+    onSpeedChanged:       matrixCanvas.requestPaint()
     onFadeStrengthChanged: matrixCanvas.requestPaint()
-    onColorModeChanged: matrixCanvas.requestPaint()
+    onColorModeChanged:   matrixCanvas.requestPaint()
     onSingleColorChanged: matrixCanvas.requestPaint()
     onPaletteIndexChanged: matrixCanvas.requestPaint()
-    onJitterChanged: matrixCanvas.requestPaint()
+    onJitterChanged:      matrixCanvas.requestPaint()
     onGlitchChanceChanged: matrixCanvas.requestPaint()
     onDebugOverlayChanged: matrixCanvas.requestPaint()
-    
+
     onMqttRenderModeChanged: {
         if (mqttEnable) {
-            writeLog("🎭 Render mode changed to: " + renderModeNames[mqttRenderMode])
+            writeLog("\uD83C\uDFAD Render mode changed to: " + renderModeNames[mqttRenderMode])
             matrixCanvas.initDrops()
             matrixCanvas.requestPaint()
         }
     }
-    
+
     onMqttEnableChanged: {
         if (mqttEnable) {
-            writeLog("🎭 Switching to MQTT mode: " + renderModeNames[mqttRenderMode])
+            writeLog("\uD83C\uDFAD Switching to MQTT mode: " + renderModeNames[mqttRenderMode])
             mqttConnect()
         } else {
-            writeLog("🎭 Switching to Classic mode (MQTT disabled)")
+            writeLog("\uD83C\uDFAD Switching to Classic mode (MQTT disabled)")
             mqttClient.disconnectFromHost()
         }
         matrixCanvas.initDrops()
         matrixCanvas.requestPaint()
     }
-    
-    onMqttHostChanged: { if (mqttEnable) mqttConnect() }
-    onMqttPortChanged: { if (mqttEnable) mqttConnect() }
+
+    onMqttHostChanged:  { if (mqttEnable) mqttConnect() }
+    onMqttPortChanged:  { if (mqttEnable) mqttConnect() }
     onMqttTopicChanged: {
         if (mqttEnable && mqttClient.connected) {
             mqttClient.disconnectFromHost()
             mqttConnect()
         }
     }
-    
+
     onMqttTopicBlacklistChanged: {
-        writeLog("🚫 Topic blacklist updated: [" + mqttTopicBlacklist + "]")
+        writeLog("\uD83D\uDEAB Topic blacklist updated: [" + mqttTopicBlacklist + "]")
     }
-    
+
     // ===== Initialization =====
     Component.onCompleted: {
         writeLog("=== Matrix Rain MQTT Wallpaper ===")
-        
         if (mqttEnable) {
             writeLog("MQTT host=[" + mqttHost + "] port=" + mqttPort + " topic=[" + mqttTopic + "]")
-            if (mqttTopicBlacklist.length > 0) {
-                writeLog("🚫 Topic blacklist: [" + mqttTopicBlacklist + "]")
-            }
-            writeLog("🔄 Reconnect interval: " + mqttReconnectInterval + "s")
-            writeLog("🎭 Render mode: " + renderModeNames[mqttRenderMode])
+            if (mqttTopicBlacklist.length > 0)
+                writeLog("\uD83D\uDEAB Topic blacklist: [" + mqttTopicBlacklist + "]")
+            writeLog("\uD83D\uDD04 Reconnect interval: " + mqttReconnectInterval + "s")
+            writeLog("\uD83C\uDFAD Render mode: " + renderModeNames[mqttRenderMode])
             Qt.callLater(mqttConnect)
         } else {
-            writeLog("🎭 Classic mode: Pure Matrix rain (MQTT disabled)")
+            writeLog("\uD83C\uDFAD Classic mode: Pure Matrix rain (MQTT disabled)")
         }
-        
         matrixCanvas.initDrops()
     }
-    
+
     Component.onDestruction: {
         mqttClient.disconnectFromHost()
     }
