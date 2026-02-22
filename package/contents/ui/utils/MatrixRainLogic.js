@@ -89,6 +89,12 @@ function buildDisplayChars(topic, payload) {
     var p = (payload != null && payload !== undefined) ? payload.toString() : ""
     var result = []
     
+    // Skip empty or whitespace-only payloads
+    if (p.trim().length === 0) {
+        console.log("[MatrixRainLogic] Skipping empty payload")
+        return []
+    }
+    
     try {
         var parsed = null
         try { parsed = JSON.parse(p) } catch(e) {}
