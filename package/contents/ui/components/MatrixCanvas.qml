@@ -8,32 +8,33 @@
 //
 //   Step 1 – Fade overlay
 //     Fill the whole canvas with a low-alpha black rectangle.
-//     This is what creates the "fading trail" of the rain.
+//     Creates the trailing-light / fade effect of the rain.
 //     Alpha = fadeStrength (configurable, typically 0.03–0.10).
 //
 //   Step 2 – Rain drop loop
 //     For each column i:
 //       a. Call activeRenderer.renderColumnContent() at the drop head.
-//       b. Advance drops[i] unconditionally (jitter applies).
+//       b. Advance drops[i] unconditionally (+ jitter variance).
 //       c. Wrap drops[i] to 0 and notify renderer via onColumnWrap().
 //
 //   Step 3 – Optional overlay pass
-//     If activeRenderer exposes renderOverlay(), call it once.
-//     This is used by HorizontalOverlayRenderer to redraw message
-//     text at full brightness on top of the rain chars.
+//     If activeRenderer exposes renderOverlay(ctx), call it once.
+//     Used by HorizontalOverlayRenderer (MQTT Inline mode) to draw
+//     message text on top of the rain without interfering with drops.
 //
 // ─────────────────────────────────────────────────────────────────
 // RENDERER INTERFACE  (methods activeRenderer must implement)
 //
-//   initializeColumns(numColumns)           – reset state for new col count
+//   initializeColumns(numColumns)            – reset for new column count
 //   renderColumnContent(ctx, i, x, y, drops) – draw one char at drop head
-//   onColumnWrap(columnIndex)               – drop wrapped; update state
-//   renderOverlay(ctx)              [opt.]  – second draw pass per frame
+//   onColumnWrap(columnIndex)                – drop wrapped; update state
+//   renderOverlay(ctx)               [opt.]  – second draw pass per frame
 //
-//   Properties read by MatrixCanvas:
-//   jitter       – extra random drop-speed variance (0–100)
-//   canvasWidth  [opt.] – set before initializeColumns if renderer needs it
-//   canvasHeight [opt.]
+//   Properties read/set by MatrixCanvas on the renderer (if they exist):
+//     jitter       – extra random drop-speed variance (0–100)
+//     canvasWidth  – canvas pixel width (set before initializeColumns)
+//     canvasHeight – canvas pixel height (set before initializeColumns)
+//     fadeStrength – same value used in step 1 (for ghost-clear tuning)
 // ─────────────────────────────────────────────────────────────────
 
 import QtQuick 2.15
@@ -51,50 +52,46 @@ Canvas {
     // ── Active renderer (injected from main.qml via property binding) ─
     property var activeRenderer: null
 
-    // ── Drop state: one float per column, in grid-row units ──────────
+    // ── Drop state: one float per column (in grid-row units) ──────────
     property var drops: []
 
     // ================================================================
     // Initialize drops array and the active renderer.
-    // Must be called whenever fontSize, canvas size, or renderer changes.
-    // Sets canvasWidth/Height on the renderer BEFORE initializeColumns
-    // so the renderer has accurate dimensions from the very first call.
+    // Sets canvasWidth/Height and fadeStrength on the renderer BEFORE
+    // calling initializeColumns so the renderer has all context it needs.
     // ================================================================
     function initDrops() {
-        // Guard: canvas may not have its final size yet on first call
+        // Guard: canvas may not have its final size on the first call
         if (canvas.width <= 0 || canvas.height <= 0) return
 
         var cols = Math.floor(canvas.width / fontSize)
+
+        // Randomise initial drop positions for a natural stagger
         var newDrops = []
         for (var j = 0; j < cols; j++) {
-            // Randomise initial drop positions for a natural stagger
             newDrops.push(Math.random() * canvas.height / fontSize)
         }
         drops = newDrops
 
         if (activeRenderer) {
-            // Pass pixel dimensions BEFORE initializeColumns so the renderer
-            // can compute grid rows from the start (e.g. HorizontalOverlayRenderer)
-            if (activeRenderer.canvasWidth !== undefined) {
-                activeRenderer.canvasWidth  = canvas.width
-                activeRenderer.canvasHeight = canvas.height
-            }
+            // Pass canvas context to renderer BEFORE initializeColumns
+            if (activeRenderer.canvasWidth  !== undefined) activeRenderer.canvasWidth  = canvas.width
+            if (activeRenderer.canvasHeight !== undefined) activeRenderer.canvasHeight = canvas.height
+            if (activeRenderer.fadeStrength !== undefined) activeRenderer.fadeStrength = canvas.fadeStrength
             activeRenderer.initializeColumns(cols)
         }
     }
 
     // ================================================================
-    // React when the renderer is swapped (mode switch from main.qml).
-    // Reinitialises the new renderer immediately so it is ready to
-    // render on the very next paint tick, even before main.qml's
-    // onMqttRenderModeChanged handler calls initDrops() explicitly.
+    // React when the renderer is swapped (render mode switch).
+    // Initialises the new renderer immediately so it is ready to paint
+    // on the very next tick, before main.qml’s explicit initDrops() call.
     // ================================================================
     onActiveRendererChanged: {
         if (activeRenderer && canvas.width > 0 && canvas.height > 0) {
-            if (activeRenderer.canvasWidth !== undefined) {
-                activeRenderer.canvasWidth  = canvas.width
-                activeRenderer.canvasHeight = canvas.height
-            }
+            if (activeRenderer.canvasWidth  !== undefined) activeRenderer.canvasWidth  = canvas.width
+            if (activeRenderer.canvasHeight !== undefined) activeRenderer.canvasHeight = canvas.height
+            if (activeRenderer.fadeStrength !== undefined) activeRenderer.fadeStrength = canvas.fadeStrength
             activeRenderer.initializeColumns(Math.floor(canvas.width / fontSize))
         }
     }
@@ -111,7 +108,7 @@ Canvas {
     }
 
     // ================================================================
-    // Main rendering loop – executes Steps 1–3 described above.
+    // Main rendering loop – executes Steps 1–3 described in the header.
     // ================================================================
     onPaint: {
         var ctx = getContext("2d")
@@ -120,11 +117,11 @@ Canvas {
 
         if (!activeRenderer) return
 
-        // ── Step 1: fade overlay ──────────────────────────────────────
+        // ── Step 1: global fade overlay ────────────────────────────────
         ctx.fillStyle = "rgba(0,0,0," + fadeStrength + ")"
         ctx.fillRect(0, 0, w, h)
 
-        // Set font once per frame (same for all renderers)
+        // Set font once per frame (shared by all renderers)
         ctx.font = fontSize + "px monospace"
 
         // ── Step 2: rain drop loop ────────────────────────────────────
@@ -132,14 +129,13 @@ Canvas {
             var x = i * fontSize
             var y = drops[i] * fontSize
 
-            // Delegate character rendering to the active renderer
+            // Renderer decides what char to draw (or skips) at drop head
             activeRenderer.renderColumnContent(ctx, i, x, y, drops)
 
-            // Advance drop unconditionally – never paused by overlay logic.
-            // jitter adds a small random speed variation per column.
+            // Drop advances unconditionally – never paused by overlay logic
             drops[i] += 1 + Math.random() * activeRenderer.jitter / 100
 
-            // Wrap drop back to the top when it exits the bottom of the canvas
+            // Wrap to top when drop exits bottom of canvas
             if (drops[i] * fontSize > h + fontSize) {
                 drops[i] = 0
                 activeRenderer.onColumnWrap(i)
@@ -147,9 +143,9 @@ Canvas {
         }
 
         // ── Step 3: optional overlay pass ────────────────────────────
-        // Only renderers that implement renderOverlay() use this pass.
-        // Other renderers (ClassicRenderer, MixedModeRenderer, etc.) do not
-        // define the function, so the check is false and nothing happens.
+        // Only called for renderers that implement renderOverlay().
+        // Other renderers (Classic, Mixed, etc.) don’t define it,
+        // so typeof returns "undefined" and the call is skipped.
         if (typeof activeRenderer.renderOverlay === "function") {
             activeRenderer.renderOverlay(ctx)
         }
