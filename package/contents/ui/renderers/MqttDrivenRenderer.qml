@@ -31,6 +31,13 @@ Item {
      */
     function assignMessage(topic, payload) {
         var chars = Logic.buildDisplayChars(topic, payload)
+        
+        // Skip empty messages
+        if (chars.length === 0) {
+            console.log("[MqttDrivenRenderer] Skipping empty message")
+            return
+        }
+        
         var targetCol = findAvailableColumn()
         
         console.log("[MqttDrivenRenderer] assignMessage: targetCol=" + targetCol + ", chars.length=" + chars.length)
@@ -64,19 +71,25 @@ Item {
         // Build list of inactive columns
         var inactiveCols = []
         for (var i = 0; i < columns; i++) {
-            if (columnAssignments[i] === null || !columnAssignments[i].active) {
+            if (!columnAssignments[i] || !columnAssignments[i].active) {
                 inactiveCols.push(i)
             }
         }
         
+        console.log("[MqttDrivenRenderer] inactive columns count: " + inactiveCols.length)
+        
         // Pick random from inactive
         if (inactiveCols.length > 0) {
             var randomIdx = Math.floor(Math.random() * inactiveCols.length)
-            return inactiveCols[randomIdx]
+            var selectedCol = inactiveCols[randomIdx]
+            console.log("[MqttDrivenRenderer] selected column: " + selectedCol + " from " + inactiveCols.length + " inactive")
+            return selectedCol
         }
         
         // All active: pick random column to replace
-        return Math.floor(Math.random() * columns)
+        var randomCol = Math.floor(Math.random() * columns)
+        console.log("[MqttDrivenRenderer] all active, replacing column: " + randomCol)
+        return randomCol
     }
     
     /**
