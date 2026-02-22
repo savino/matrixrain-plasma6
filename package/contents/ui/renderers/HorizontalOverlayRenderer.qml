@@ -32,7 +32,7 @@
 //
 //     CASE B – drop head is INSIDE an active message block:
 //       → Apply an accelerated per-cell black fade rectangle.
-//         Alpha = fadeStrength * GHOST_CLEAR_MULTIPLIER (default 8×).
+//         Alpha = fadeStrength * ghostClearMultiplier (default 8×).
 //         This is NOT opaque – it is a fast but gradual darkening that
 //         clears ghost rain chars in ~5 frames without creating a
 //         visible rectangular border.
@@ -103,7 +103,7 @@ Item {
     // Higher = faster ghost clear, but must stay well below 1.0 to
     // avoid a visible rectangular edge artifact.
     // At fadeStrength=0.05: 8 × 0.05 = 0.40 alpha → ghosts gone in ~5 frames.
-    readonly property real GHOST_CLEAR_MULTIPLIER: 8.0
+    readonly property real ghostClearMultiplier: 8.0
 
     // ── Hard performance limits (intentionally conservative) ─────────────
     readonly property int maxMessages: 5   // concurrent blocks on screen
@@ -314,7 +314,7 @@ Item {
     // CASE B – drop head is INSIDE an active message block:
     //   Apply an accelerated per-cell fade rectangle to quickly clear
     //   ghost rain chars without creating a visible box border:
-    //     alpha = fadeStrength × GHOST_CLEAR_MULTIPLIER
+    //     alpha = fadeStrength × ghostClearMultiplier
     //   This darkens the cell faster than the global fade overlay but
     //   is still semi-transparent, so no sharp rectangular edge appears.
     //   After ~5 frames the old ghost chars are effectively invisible.
@@ -328,9 +328,8 @@ Item {
 
         if (isCellActive(columnIndex, gridRow)) {
             // Accelerated ghost-clear: semi-transparent black over this cell.
-            // Only applied when the drop head sweeps through, which happens
-            // once per column per pass – very low cost.
-            var clearAlpha = Math.min(0.95, fadeStrength * GHOST_CLEAR_MULTIPLIER)
+            // Only applied when the drop head sweeps through – very low cost.
+            var clearAlpha = Math.min(0.95, fadeStrength * ghostClearMultiplier)
             ctx.fillStyle = "rgba(0,0,0," + clearAlpha + ")"
             ctx.fillRect(columnIndex * fontSize, gridRow * fontSize,
                          fontSize, fontSize)   // one cell only, not the whole block
@@ -350,7 +349,7 @@ Item {
     // Pass 2 – MQTT text rendering.
     //
     // Called ONCE per frame by MatrixCanvas after the rain loop.
-    // Draws each active message’s text lines at high brightness.
+    // Draws each active message's text lines at high brightness.
     //
     // NO fillRect background – chars only, on the (fading) canvas.
     // MQTT chars are bright enough to visually dominate the faded rain
@@ -371,7 +370,7 @@ Item {
             var msg = activeMessages[m]
             if (msg.expiry <= now) continue   // expired; skip until Timer purges
 
-            // Anchor colour to the message’s leftmost column
+            // Anchor colour to the message's leftmost column
             var msgColor = columnColor(msg.col)
 
             for (var r = 0; r < msg.lines.length; r++) {
@@ -386,8 +385,7 @@ Item {
                     : ColorUtils.lightenColor(msgColor, 0.85)   // payload values
 
                 // One fillText per line; monospace font aligns chars to the grid.
-                // NO background fill – the bright chars are drawn directly over
-                // the (fading) canvas content.
+                // NO background fill – bright chars drawn directly over canvas.
                 ctx.fillText(
                     line,
                     msg.col * fontSize,
