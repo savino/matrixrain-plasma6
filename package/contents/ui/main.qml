@@ -53,7 +53,7 @@ WallpaperItem {
     // Human-readable names for each render mode index.
     // Index must match the switch-case in MatrixCanvas.activeRenderer
     // and the ComboBox model order in config.qml.
-    readonly property var renderModeNames: ["Mixed", "MQTT-Only", "MQTT-Driven", "MQTT Inline"]
+    readonly property var renderModeNames: ["Mixed", "MQTT-Only", "MQTT-Driven", "Horizontal Inline"]
 
     // ===== Utility Functions =====
     function writeLog(msg)   { console.log("[MQTTRain] " + msg) }
@@ -103,7 +103,7 @@ WallpaperItem {
 
             messagesReceived++
 
-            // Update message history for debug overlay
+            // Update message history for debug box
             var hist = messageHistory.slice()
             hist.unshift({ topic: safeTopic, payload: safePayload })
             if (hist.length > maxHistory) hist = hist.slice(0, maxHistory)
@@ -182,10 +182,11 @@ WallpaperItem {
         colorMode:   main.colorMode
     }
 
-    // HorizontalOverlayRenderer is the implementation file; the mode is
-    // now called "MQTT Inline" in the UI (substitution, not overlay).
-    HorizontalOverlayRenderer {
-        id: mqttInlineRenderer
+    // Render mode 3 – Horizontal Inline (Matrix Inject)
+    // MQTT message chars are injected directly into the rain grid.
+    // Drops skip occupied cells; no background box; no separate widget.
+    HorizontalInlineRenderer {
+        id: horizontalInlineRenderer
         fontSize:        main.fontSize
         baseColor:       main.singleColor
         jitter:          main.jitter
@@ -194,6 +195,7 @@ WallpaperItem {
         paletteIndex:    main.paletteIndex
         colorMode:       main.colorMode
         displayDuration: 3000
+        maxMessages:     15
     }
 
     // ===== Matrix Canvas =====
@@ -212,13 +214,13 @@ WallpaperItem {
                 case 0:  return mixedRenderer
                 case 1:  return mqttOnlyRenderer
                 case 2:  return mqttDrivenRenderer
-                case 3:  return mqttInlineRenderer
+                case 3:  return horizontalInlineRenderer
                 default: return mixedRenderer
             }
         }
     }
 
-    // ===== Debug Overlay =====
+    // ===== Debug Box =====
     MQTTDebugOverlay {
         id: debugOverlay
         anchors.fill: parent
