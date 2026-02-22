@@ -215,11 +215,13 @@ ColumnLayout {
 
             QC.ComboBox {
                 id: mqttRenderModeCombo
+                // Index must stay in sync with renderModeNames[] in main.qml
+                // and the switch-case in MatrixCanvas.activeRenderer.
                 model: [
                     qsTr("Mixed (MQTT + Random)"),
                     qsTr("MQTT Only (Loop messages)"),
                     qsTr("MQTT Driven (On message)"),
-                    qsTr("Horizontal Overlay (Readable)")
+                    qsTr("MQTT Inline (Substitution)")
                 ]
                 enabled: mqttEnable.checked
                 KirigamiLayouts.FormData.label: qsTr("Render Mode")

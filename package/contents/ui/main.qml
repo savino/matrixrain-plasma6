@@ -50,8 +50,10 @@ WallpaperItem {
         ["#ff00ff", "#00ffcc", "#cc00ff", "#ffcc33", "#33ccff", "#ccff00"]
     ]
 
-    // Render mode names for debug
-    readonly property var renderModeNames: ["Mixed", "MQTT-Only", "MQTT-Driven", "Horizontal Overlay"]
+    // Human-readable names for each render mode index.
+    // Index must match the switch-case in MatrixCanvas.activeRenderer
+    // and the ComboBox model order in config.qml.
+    readonly property var renderModeNames: ["Mixed", "MQTT-Only", "MQTT-Driven", "MQTT Inline"]
 
     // ===== Utility Functions =====
     function writeLog(msg)   { console.log("[MQTTRain] " + msg) }
@@ -180,15 +182,17 @@ WallpaperItem {
         colorMode:   main.colorMode
     }
 
+    // HorizontalOverlayRenderer is the implementation file; the mode is
+    // now called "MQTT Inline" in the UI (substitution, not overlay).
     HorizontalOverlayRenderer {
-        id: horizontalOverlayRenderer
-        fontSize:       main.fontSize
-        baseColor:      main.singleColor
-        jitter:         main.jitter
-        glitchChance:   main.glitchChance
-        palettes:       main.palettes
-        paletteIndex:   main.paletteIndex
-        colorMode:      main.colorMode
+        id: mqttInlineRenderer
+        fontSize:        main.fontSize
+        baseColor:       main.singleColor
+        jitter:          main.jitter
+        glitchChance:    main.glitchChance
+        palettes:        main.palettes
+        paletteIndex:    main.paletteIndex
+        colorMode:       main.colorMode
         displayDuration: 3000
     }
 
@@ -208,7 +212,7 @@ WallpaperItem {
                 case 0:  return mixedRenderer
                 case 1:  return mqttOnlyRenderer
                 case 2:  return mqttDrivenRenderer
-                case 3:  return horizontalOverlayRenderer
+                case 3:  return mqttInlineRenderer
                 default: return mixedRenderer
             }
         }
