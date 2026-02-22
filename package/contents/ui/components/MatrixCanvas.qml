@@ -31,14 +31,13 @@ Canvas {
             drops.push(Math.random() * canvas.height / fontSize)
         }
 
-        // Pass canvas dimensions to renderer when available
-        if (activeRenderer && activeRenderer.canvasWidth !== undefined) {
-            activeRenderer.canvasWidth  = canvas.width
-            activeRenderer.canvasHeight = canvas.height
-        }
-
-        // Initialize renderer
+        // Pass canvas dimensions to renderer BEFORE calling initializeColumns
         if (activeRenderer) {
+            if (activeRenderer.canvasWidth !== undefined) {
+                activeRenderer.canvasWidth  = canvas.width
+                activeRenderer.canvasHeight = canvas.height
+            }
+            // Then initialize renderer
             activeRenderer.initializeColumns(cols)
         }
     }
