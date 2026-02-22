@@ -1,11 +1,19 @@
-// HorizontalOverlayRenderer.qml
-// Render mode: Classic Matrix rain + MQTT messages displayed horizontally
+// HorizontalOverlayRenderer.qml  v2
+// Render mode: Classic Matrix rain + horizontal readable MQTT messages
 //
-// MQTT messages appear as readable horizontal text blocks overlaid on the
-// classic rain. Each message occupies a rectangular region on screen.
-// While the message is visible (displayDuration ms), falling drops skip
-// protected cells so the message stays legible. After the timer expires
-// the message fades out and the rain reclaims those cells.
+// Architecture (two-pass rendering):
+//   Pass 1 – renderColumnContent(): pure classic rain char at drop head.
+//             Drops always advance normally. No overlay logic here.
+//   Pass 2 – renderOverlay(): called ONCE per frame by MatrixCanvas after
+//             the rain loop. Redraws all active message cells at full
+//             brightness, overriding the fade effect only on those cells.
+//
+// Message lifecycle:
+//   - assignMessage()  : finds a free random position, stores the block
+//   - Timer (1 s)      : purges expired messages and rebuilds cell map
+//   - renderOverlay()  : redraws bright chars every frame until expiry
+//   After expiry the cells are no longer redrawn, so the fade overlay
+//   of the canvas naturally wipes them out over the next few frames.
 
 import QtQuick 2.15
 import "../utils/ColorUtils.js" as ColorUtils
@@ -17,41 +25,37 @@ Item {
     property var columnAssignments: []
     property int columns: 0
 
-    // ---- Visual config (injected by main.qml) ----
-    property int   fontSize:    16
-    property color baseColor:   "#00ff00"
-    property real  jitter:      0
+    // ---- Visual config (bound from main.qml) ----
+    property int   fontSize:     16
+    property color baseColor:    "#00ff00"
+    property real  jitter:       0
     property int   glitchChance: 1
-    property var   palettes:    []
+    property var   palettes:     []
     property int   paletteIndex: 0
-    property int   colorMode:   0
+    property int   colorMode:    0
 
     // ---- Tunable ----
-    // How long (ms) each message stays on screen
+    // How long (ms) each message block stays at full brightness
     property int displayDuration: 3000
 
-    // ---- Internal state ----
-    // activeMessages: list of overlay objects
-    //   { lines: [string], col: int, row: int, cols: int, rows: int, expiry: int }
-    property var activeMessages: []
-
-    // protectedCells: Set-like object { "col,row": {ch, isValue} }
-    // Rebuilt whenever activeMessages changes
-    property var protectedCells: ({})
-
-    // ---- Canvas dimensions (set by MatrixCanvas before initializeColumns) ----
+    // ---- Canvas dimensions (set by MatrixCanvas.initDrops) ----
     property int canvasWidth:  0
     property int canvasHeight: 0
 
-    // ------------------------------------------------------------------
-    // Pretty-print a payload string (JSON → indented, plain → as-is)
-    // Returns an array of strings (lines)
-    // ------------------------------------------------------------------
+    // ---- Internal state ----
+    // activeMessages: [{ lines:[str], col:int, row:int, expiry:int }]
+    property var activeMessages: []
+
+    // overlayMap: { "col,row": { ch:str, isValue:bool } }
+    // Rebuilt whenever activeMessages changes.
+    property var overlayMap: ({})
+
+    // =================================================================
+    // PRIVATE: pretty-print topic + payload → array of strings
+    // =================================================================
     function prettyLines(topic, payload) {
         var lines = []
-        // First line: topic (shortened if needed)
-        var topicLine = topic
-        lines.push(topicLine)
+        lines.push(topic)
 
         var p = (payload !== null && payload !== undefined) ? payload.toString() : ""
         if (p.trim().length === 0) {
@@ -62,127 +66,99 @@ Item {
         try {
             var parsed = JSON.parse(p)
             if (parsed !== null && typeof parsed === "object") {
-                // Pretty-print JSON, split into lines
                 var pretty = JSON.stringify(parsed, null, 2)
                 var jsonLines = pretty.split("\n")
                 for (var i = 0; i < jsonLines.length; i++) {
-                    lines.push(jsonLines[i])
+                    // Skip blank lines to save screen space
+                    if (jsonLines[i].trim().length > 0)
+                        lines.push(jsonLines[i])
                 }
             } else {
                 lines.push(p)
             }
         } catch(e) {
-            console.log("[HorizontalOverlayRenderer] JSON parse error: " + e)
             lines.push(p)
         }
 
         return lines
     }
 
-    // ------------------------------------------------------------------
-    // Rebuild the protectedCells map from activeMessages
-    // ------------------------------------------------------------------
-    function rebuildProtectedCells() {
-        var cells = {}
-        var msgs = activeMessages
-        for (var m = 0; m < msgs.length; m++) {
-            var msg = msgs[m]
+    // =================================================================
+    // PRIVATE: rebuild overlayMap from activeMessages
+    // Called only after activeMessages changes (assign or purge).
+    // =================================================================
+    function rebuildOverlayMap() {
+        var map = {}
+        for (var m = 0; m < activeMessages.length; m++) {
+            var msg = activeMessages[m]
             for (var r = 0; r < msg.lines.length; r++) {
                 var line = msg.lines[r]
                 for (var c = 0; c < line.length; c++) {
-                    var gc = msg.col + c   // grid column
-                    var gr = msg.row + r   // grid row
-                    if (gc >= 0 && gr >= 0) {
-                        var isValue = (r > 0)  // topic line uses key colour, rest value
-                        cells[gc + "," + gr] = { ch: line.charAt(c), isValue: isValue }
-                    }
+                    var key = (msg.col + c) + "," + (msg.row + r)
+                    map[key] = { ch: line.charAt(c), isValue: (r > 0) }
                 }
             }
         }
-        protectedCells = cells
-        console.log("[HorizontalOverlayRenderer] rebuildProtectedCells: " + Object.keys(cells).length + " cells protected")
+        overlayMap = map
     }
 
-    // ------------------------------------------------------------------
-    // Purge expired messages and rebuild cells
-    // ------------------------------------------------------------------
+    // =================================================================
+    // PRIVATE: remove expired messages and rebuild map.
+    // Called ONLY from the Timer (once per second).
+    // =================================================================
     function purgeExpired() {
-        var now = Date.now()
-        var msgs = activeMessages
+        var now  = Date.now()
         var kept = []
-        for (var i = 0; i < msgs.length; i++) {
-            if (msgs[i].expiry > now) {
-                kept.push(msgs[i])
-            }
+        for (var i = 0; i < activeMessages.length; i++) {
+            if (activeMessages[i].expiry > now)
+                kept.push(activeMessages[i])
         }
-        if (kept.length !== msgs.length) {
-            console.log("[HorizontalOverlayRenderer] purgeExpired: removed " + (msgs.length - kept.length) + " messages")
+        if (kept.length !== activeMessages.length) {
             activeMessages = kept
-            rebuildProtectedCells()
+            rebuildOverlayMap()
         }
     }
 
-    // ------------------------------------------------------------------
-    // Called by main.qml when an MQTT message arrives
-    // ------------------------------------------------------------------
+    // =================================================================
+    // PUBLIC: called by main.qml when an MQTT message arrives.
+    // Finds a low-overlap random position and adds the message block.
+    // =================================================================
     function assignMessage(topic, payload) {
-        console.log("[HorizontalOverlayRenderer] assignMessage called: topic=" + topic + ", payload length=" + payload.length)
-        console.log("[HorizontalOverlayRenderer] canvasWidth=" + canvasWidth + ", canvasHeight=" + canvasHeight + ", columns=" + columns)
-        
-        purgeExpired()
-
         var lines = prettyLines(topic, payload)
-        console.log("[HorizontalOverlayRenderer] prettyLines returned " + lines.length + " lines")
         if (lines.length === 0) return
 
-        // Measure block size in grid cells
+        // Measure block extent in grid cells
         var blockCols = 0
         for (var i = 0; i < lines.length; i++) {
             if (lines[i].length > blockCols) blockCols = lines[i].length
         }
         var blockRows = lines.length
 
-        // Total grid dimensions
-        // Fallback to columns property if canvasWidth is not set
-        var gridCols = (canvasWidth > 0 && fontSize > 0) 
-            ? Math.floor(canvasWidth / fontSize) 
-            : columns
-        var gridRows = (canvasHeight > 0 && fontSize > 0) 
-            ? Math.floor(canvasHeight / fontSize) 
-            : 40  // reasonable fallback
+        // Grid size (prefer canvasWidth; fall back to columns property)
+        var gridCols = (canvasWidth  > 0 && fontSize > 0)
+                       ? Math.floor(canvasWidth  / fontSize) : columns
+        var gridRows = (canvasHeight > 0 && fontSize > 0)
+                       ? Math.floor(canvasHeight / fontSize) : 40
 
-        console.log("[HorizontalOverlayRenderer] grid: " + gridCols + "x" + gridRows + ", block: " + blockCols + "x" + blockRows)
+        if (gridCols <= 0 || gridRows <= 0) return
 
-        if (gridCols <= 0 || gridRows <= 0) {
-            console.log("[HorizontalOverlayRenderer] ERROR: invalid grid dimensions")
-            return
-        }
-
-        // Clamp block so it fits on screen
+        // Constrain so block fits on screen
         var maxCol = Math.max(0, gridCols - blockCols)
         var maxRow = Math.max(0, gridRows - blockRows)
 
-        if (maxCol < 0 || maxRow < 0) {
-            console.log("[HorizontalOverlayRenderer] WARNING: message too large for screen")
-            maxCol = Math.max(0, maxCol)
-            maxRow = Math.max(0, maxRow)
-        }
-
-        // Try to find a position that doesn't heavily overlap existing messages
-        var bestCol = (maxCol > 0) ? Math.floor(Math.random() * (maxCol + 1)) : 0
-        var bestRow = (maxRow > 0) ? Math.floor(Math.random() * (maxRow + 1)) : 0
-        var attempts = 12
+        // Pick position with lowest overlap with existing messages
+        var bestCol = Math.floor(Math.random() * (maxCol + 1))
+        var bestRow = Math.floor(Math.random() * (maxRow + 1))
         var minOverlap = 999999
 
-        for (var a = 0; a < attempts; a++) {
-            var tryCol = (maxCol > 0) ? Math.floor(Math.random() * (maxCol + 1)) : 0
-            var tryRow = (maxRow > 0) ? Math.floor(Math.random() * (maxRow + 1)) : 0
+        for (var a = 0; a < 12; a++) {
+            var tryCol = Math.floor(Math.random() * (maxCol + 1))
+            var tryRow = Math.floor(Math.random() * (maxRow + 1))
             var overlap = 0
             for (var r = 0; r < blockRows; r++) {
                 for (var c = 0; c < blockCols; c++) {
-                    if (protectedCells[(tryCol + c) + "," + (tryRow + r)] !== undefined) {
+                    if (overlayMap[(tryCol + c) + "," + (tryRow + r)] !== undefined)
                         overlap++
-                    }
                 }
             }
             if (overlap < minOverlap) {
@@ -193,95 +169,92 @@ Item {
             if (overlap === 0) break
         }
 
-        var newMsg = {
+        var newList = activeMessages.slice()
+        newList.push({
             lines:  lines,
             col:    bestCol,
             row:    bestRow,
-            cols:   blockCols,
-            rows:   blockRows,
             expiry: Date.now() + displayDuration
-        }
-
-        var newList = activeMessages.slice()
-        newList.push(newMsg)
+        })
         activeMessages = newList
-        rebuildProtectedCells()
+        rebuildOverlayMap()
 
-        console.log("[HorizontalOverlayRenderer] ✅ placed message at col=" + bestCol +
-                    " row=" + bestRow + " size=" + blockCols + "x" + blockRows + 
-                    ", active messages=" + activeMessages.length)
+        console.log("[HorizontalOverlayRenderer] placed " + blockCols + "x" + blockRows
+                    + " at (" + bestCol + "," + bestRow + ")")
     }
 
-    // ------------------------------------------------------------------
-    // Called by MatrixCanvas for every drop position
-    // Returns true if this cell is protected (caller skips normal char)
-    // ------------------------------------------------------------------
-    function isCellProtected(gridCol, gridRow) {
-        return protectedCells[gridCol + "," + gridRow] !== undefined
-    }
-
-    // ------------------------------------------------------------------
-    // Render a single drop cell
-    // gridRow = Math.floor(y / fontSize)
-    // ------------------------------------------------------------------
+    // =================================================================
+    // Pass 1 – Classic rain char at the drop head.
+    // This is called N times per frame (once per column).
+    // NO overlay logic, NO purgeExpired here.
+    // =================================================================
     function renderColumnContent(ctx, columnIndex, x, y, drops) {
-        purgeExpired()
-
-        var gridRow = Math.floor(y / fontSize)
-        var key = columnIndex + "," + gridRow
-        var cell = protectedCells[key]
-
         var color = (colorMode === 0)
             ? baseColor.toString()
             : palettes[paletteIndex][columnIndex % palettes[paletteIndex].length]
 
-        if (cell !== undefined) {
-            // Draw the overlay character
-            var bright = cell.isValue
-                ? ColorUtils.lightenColor(color, 0.7)
-                : ColorUtils.lightenColor(color, 0.4)
-            ctx.fillStyle = bright
-            ctx.fillText(cell.ch, x, y)
-        } else {
-            // Normal rain character
-            var isGlitch = (Math.random() < glitchChance / 100)
-            var ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
-            ctx.fillStyle = isGlitch ? "#ffffff" : color
-            ctx.fillText(ch, x, y)
+        var isGlitch = (Math.random() < glitchChance / 100)
+        var ch = String.fromCharCode(0x30A0 + Math.floor(Math.random() * 96))
+        ctx.fillStyle = isGlitch ? "#ffffff" : color
+        ctx.fillText(ch, x, y)
+    }
+
+    // =================================================================
+    // Pass 2 – Overlay: called ONCE per frame by MatrixCanvas after the
+    // rain loop. Redraws every active message cell at full brightness.
+    // Because it runs every frame, it "fights" the fade overlay and keeps
+    // chars visible for the full displayDuration.
+    // =================================================================
+    function renderOverlay(ctx) {
+        var keys = Object.keys(overlayMap)
+        if (keys.length === 0) return
+
+        for (var k = 0; k < keys.length; k++) {
+            var key   = keys[k]
+            var sep   = key.indexOf(",")
+            var col   = parseInt(key.substring(0, sep))
+            var row   = parseInt(key.substring(sep + 1))
+            var cell  = overlayMap[key]
+
+            // Per-column colour in multi-colour mode
+            var color = (colorMode === 0)
+                ? baseColor.toString()
+                : palettes[paletteIndex][col % palettes[paletteIndex].length]
+
+            // Brighter for payload lines, slightly dimmer for topic line
+            ctx.fillStyle = cell.isValue
+                ? ColorUtils.lightenColor(color, 0.75)
+                : ColorUtils.lightenColor(color, 0.45)
+
+            // Pixel position: x = col*fontSize, y baseline = (row+1)*fontSize
+            ctx.fillText(cell.ch, col * fontSize, (row + 1) * fontSize)
         }
     }
 
-    // ------------------------------------------------------------------
-    // Called when a column wraps – nothing special needed here
-    // ------------------------------------------------------------------
-    function onColumnWrap(columnIndex) {
-        // No per-column tracking needed
-    }
+    // =================================================================
+    // Called when a column wraps to top – nothing needed here
+    // =================================================================
+    function onColumnWrap(columnIndex) { /* no-op */ }
 
-    // ------------------------------------------------------------------
-    // Initialize
-    // ------------------------------------------------------------------
+    // =================================================================
+    // Initialize (called by MatrixCanvas.initDrops)
+    // =================================================================
     function initializeColumns(numColumns) {
-        console.log("[HorizontalOverlayRenderer] initializeColumns: " + numColumns + 
-                    ", canvasWidth=" + canvasWidth + ", canvasHeight=" + canvasHeight)
+        console.log("[HorizontalOverlayRenderer] init cols=" + numColumns
+                    + " canvas=" + canvasWidth + "x" + canvasHeight)
         var newCA = []
         for (var i = 0; i < numColumns; i++) newCA.push(null)
         columnAssignments = newCA
-        columns = numColumns
-        activeMessages = []
-        protectedCells = ({})
+        columns           = numColumns
+        activeMessages    = []
+        overlayMap        = ({})
     }
 
-    // Expiry timer – checks every second
+    // Expiry timer – runs once per second, NOT per frame
     Timer {
-        interval: 1000
-        running:  true
-        repeat:   true
+        interval:  1000
+        running:   true
+        repeat:    true
         onTriggered: renderer.purgeExpired()
-    }
-
-    Component.onCompleted: {
-        console.log("[HorizontalOverlayRenderer] Component completed: fontSize=" + fontSize + 
-                    ", displayDuration=" + displayDuration + "ms")
     }
 }

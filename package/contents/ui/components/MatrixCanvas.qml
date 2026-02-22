@@ -1,6 +1,12 @@
 // MatrixCanvas.qml
 // Base canvas component for Matrix rain rendering
 // Renderer-agnostic: delegates column content to activeRenderer
+//
+// Rendering pipeline each frame:
+//   1. Fill fade overlay (rgba black with low alpha → trail effect)
+//   2. For each drop: call activeRenderer.renderColumnContent() at drop head
+//      and advance drop normally (always, regardless of renderer type)
+//   3. If renderer exposes renderOverlay(): call it once for overlay pass
 
 import QtQuick 2.15
 
@@ -14,15 +20,15 @@ Canvas {
     property real fadeStrength: 0.05
     property bool mqttEnable:   false
 
-    // Active renderer (injected)
+    // Active renderer (injected from main.qml)
     property var activeRenderer: null
 
-    // Drop positions (per column)
+    // Drop positions (per column, in grid units)
     property var drops: []
 
-    /**
-     * Initialize drops array and renderer columns
-     */
+    // -----------------------------------------------------------------
+    // Initialize drops and renderer
+    // -----------------------------------------------------------------
     function initDrops() {
         drops = []
         var cols = Math.floor(canvas.width / fontSize)
@@ -31,81 +37,75 @@ Canvas {
             drops.push(Math.random() * canvas.height / fontSize)
         }
 
-        // Pass canvas dimensions to renderer BEFORE calling initializeColumns
         if (activeRenderer) {
+            // Pass canvas pixel dimensions BEFORE initializeColumns
+            // so the renderer knows the screen size from the start
             if (activeRenderer.canvasWidth !== undefined) {
                 activeRenderer.canvasWidth  = canvas.width
                 activeRenderer.canvasHeight = canvas.height
             }
-            // Then initialize renderer
             activeRenderer.initializeColumns(cols)
         }
     }
 
-    /**
-     * Animation timer
-     */
+    // -----------------------------------------------------------------
+    // Animation timer
+    // -----------------------------------------------------------------
     Timer {
         id: timer
-        interval: 1000 / canvas.speed
-        running:  true
-        repeat:   true
+        interval:  1000 / canvas.speed
+        running:   true
+        repeat:    true
         onTriggered: canvas.requestPaint()
     }
 
-    /**
-     * Main rendering loop
-     */
+    // -----------------------------------------------------------------
+    // Main rendering loop
+    // -----------------------------------------------------------------
     onPaint: {
         var ctx = getContext("2d")
-        var w = width
-        var h = height
+        var w   = width
+        var h   = height
 
-        // Fade overlay (creates trail effect)
+        // --- Step 1: fade overlay (creates the trailing-light effect) ---
         ctx.fillStyle = "rgba(0,0,0," + fadeStrength + ")"
         ctx.fillRect(0, 0, w, h)
 
-        // Verify renderer is available
         if (!activeRenderer) return
 
-        // Setup font
         ctx.font = fontSize + "px monospace"
 
-        // Render each column
+        // --- Step 2: rain loop – one char per column at drop head ---
         for (var i = 0; i < drops.length; i++) {
             var x = i * fontSize
             var y = drops[i] * fontSize
 
-            // Delegate column rendering to active renderer
-            // The renderer decides what to draw (rain char or overlay char)
+            // Renderer draws whatever char belongs at this position
             activeRenderer.renderColumnContent(ctx, i, x, y, drops)
 
-            // Only advance the drop if the current cell is NOT protected
-            var gridRow = Math.floor(y / fontSize)
-            var cellProtected = (typeof activeRenderer.isCellProtected === "function")
-                ? activeRenderer.isCellProtected(i, gridRow)
-                : false
+            // Drops ALWAYS advance – never paused by overlay logic
+            drops[i] += 1 + Math.random() * activeRenderer.jitter / 100
 
-            if (!cellProtected) {
-                drops[i] += 1 + Math.random() * activeRenderer.jitter / 100
-            }
-
-            // Wrap at bottom
+            // Wrap drop back to top
             if (drops[i] * fontSize > h + fontSize) {
                 drops[i] = 0
                 activeRenderer.onColumnWrap(i)
             }
         }
+
+        // --- Step 3: overlay pass (optional, renderer-specific) ---
+        // Called ONCE per frame. Renderers that support a second draw
+        // pass (e.g. HorizontalOverlayRenderer) expose renderOverlay().
+        if (typeof activeRenderer.renderOverlay === "function") {
+            activeRenderer.renderOverlay(ctx)
+        }
     }
 
-    /**
-     * Handle resize
-     */
-    onWidthChanged: initDrops()
+    // -----------------------------------------------------------------
+    // Resize handlers
+    // -----------------------------------------------------------------
+    onWidthChanged:  initDrops()
     onHeightChanged: requestPaint()
 
-    /**
-     * Initialize on creation
-     */
     Component.onCompleted: initDrops()
 }
