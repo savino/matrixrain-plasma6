@@ -429,7 +429,260 @@ Dato un topic `T`:
 
 ---
 
-## 6. Estensioni future
+## 6. Modalità di rendering MQTT (Renderers)
+
+MatrixRain espone diverse modalità di rendering che determinano come i messaggi MQTT vengono visualizzati sullo sfondo del wallpaper. Ogni modalità è implementata in un componente QML dedicato (`renderers/`).
+
+### 6.1 Indice delle modalità
+
+| # | Nome display | Componente | Descrizione breve |
+|---|---|---|---|
+| 0 | Matrix Only | `ClassicRenderer.qml` | Pioggia Matrix pura, nessun MQTT visibile |
+| 1 | MQTT Only | `MqttOnlyRenderer.qml` | Solo messaggi MQTT verticali, nessuna pioggia |
+| 2 | Mixed Mode | `MixedModeRenderer.qml` | Rain verticale + messaggi MQTT verticali in colonne dedicate |
+| 3 | Horizontal Inline | `HorizontalInlineRenderer.qml` | Matrix Inject: messaggi orizzontali iniettati nella pioggia |
+| 4 | Horizontal Overlay (*legacy*) | `HorizontalOverlayRenderer.qml` | Background boxes per messaggi orizzontali |
+| 5 | MQTT Driven | `MqttDrivenRenderer.qml` | Messaggi MQTT guidano velocità/colore drops |
+
+### 6.2 Modalità 0 – Matrix Only (`ClassicRenderer`)
+
+**Comportamento:**
+- Rendering di pioggia Matrix verticale classica.
+- Nessun messaggio MQTT visibile.
+- Drop cadono continuamente con velocità configurabile.
+- Colori palette applicati per colonna (se `colorMode > 0`).
+
+**Interfaccia:**
+- `assignMessage(topic, payload)` → no-op (ignorato).
+- `renderColumnContent(ctx, col, x, y, drops)` → disegna char Katakana random.
+- `onColumnWrap(col)` → reset drop head a y=0.
+
+**Uso:**
+Per sfondi puramente estetici senza sovrapposizione dati.
+
+---
+
+### 6.3 Modalità 1 – MQTT Only (`MqttOnlyRenderer`)
+
+**Comportamento:**
+- Nessuna pioggia Matrix.
+- Ogni colonna mostra un singolo messaggio MQTT che scorre verticalmente.
+- Il testo viene troncato/wrappato per adattarsi alla larghezza della colonna.
+- Colori per colonna dal `colorMode` attivo.
+
+**Interfaccia:**
+- `assignMessage(topic, payload)`:
+  - Assegna il messaggio alla colonna con meno caratteri attivi (load balancing).
+  - Costruisce stringa `"topic: payload"`, tronca/wrapup se troppo lungo.
+- `renderColumnContent(ctx, col, x, y, drops)`:
+  - Disegna il carattere corrente del messaggio assegnato alla colonna.
+  - Se nessun messaggio: disegna spazio vuoto (nessun Katakana).
+- `onColumnWrap(col)` → libera la colonna per nuovi messaggi.
+
+**Parametri:**
+- `messageSpeed` (ms/frame, default 50) – velocità scroll verticale.
+
+**Uso:**
+Console-like, per debug o monitoring puro.
+
+---
+
+### 6.4 Modalità 2 – Mixed Mode (`MixedModeRenderer`)
+
+**Comportamento:**
+- Colonne alternate mostrano pioggia Matrix **o** messaggi MQTT.
+- La distribuzione è configurabile tramite `ratio` (es. 70% rain, 30% MQTT).
+- Colonne rain: drop verticali normali.
+- Colonne MQTT: scroll verticale di topic+payload.
+
+**Interfaccia:**
+- `assignMessage(topic, payload)`:
+  - Assegna alle colonne marcate come "MQTT" (round-robin o load balancing).
+  - Costruisce testo come in `MqttOnlyRenderer`.
+- `renderColumnContent(ctx, col, x, y, drops)`:
+  - Se colonna rain → Katakana random.
+  - Se colonna MQTT → char del messaggio attivo.
+- `initializeColumns(numCols)`:
+  - Marca colonne come `"rain"` o `"mqtt"` in base al `ratio`.
+
+**Parametri:**
+- `ratio` (0.0–1.0, default 0.7) – frazione di colonne dedicate al rain.
+- `messageSpeed` (ms/frame, default 50).
+
+**Uso:**
+Bilanciamento visuale: estetica Matrix + visibilità dati MQTT.
+
+---
+
+### 6.5 Modalità 3 – Horizontal Inline (`HorizontalInlineRenderer`) 🆕
+
+**Comportamento:**
+I messaggi MQTT vengono **iniettati direttamente nella griglia del rain** senza background visibile. I caratteri MQTT sono parte della pioggia stessa, non un overlay separato.
+
+**Meccanismo (two-pass rendering):**
+
+1. **Pass 1 – `renderColumnContent(ctx, col, x, y, drops)`**:
+   - Chiamato una volta per colonna per frame alla posizione del drop head.
+   - Se la cella grid `(col, gridRow)` è occupata da un messaggio MQTT attivo → `return` senza disegnare niente.
+   - Il drop avanza comunque normalmente (ritmo del rain inalterato).
+   - Altrimenti: disegna char Katakana random (pioggia normale).
+
+2. **Pass 2 – `renderInlineChars(ctx)`**:
+   - Chiamato una volta per frame dopo il loop dei drop.
+   - Per ogni messaggio attivo nella queue:
+     - Disegna ogni riga di testo con un singolo `ctx.fillText(line, x, y)` – **nessun `fillRect` di background**.
+     - Brightness elevato (0.85 per payload, 0.40 per topic) per resistere al global fade (Step 1 del canvas).
+     - I char MQTT rimangono leggibili finché il messaggio non scade.
+   - Dopo scadenza: smette di ridisegnare → i char sfumano naturalmente con il rain.
+
+**Queue e collision:**
+- `msgQueue` FIFO con capacità `maxMessages` (default 15).
+- Ogni messaggio occupa un rettangolo AABB `(col, row, blockCols, blockRows)`.
+- Placement: fino a 12 tentativi random per trovare una posizione libera (no overlap).
+- Se la queue è piena, il messaggio più vecchio viene rimosso prima di aggiungere il nuovo.
+- Timer 1 Hz (`purgeExpired()`) rimuove messaggi scaduti dalla queue.
+
+**Performance:**
+- `isCellOccupied()` → O(maxMessages) comparazioni integer per colonna per frame (negligibile).
+- `renderInlineChars()` → max `maxMessages × maxLines` = 15 × 12 = 180 `fillText` per frame.
+- Nessuna mappa flat di celle, nessun loop per-char.
+
+**Parametri:**
+- `displayDuration` (ms, default 3000) – durata visibilità messaggio.
+- `maxMessages` (int, default 15) – capacità massima queue.
+- `maxLines` (int, const 12) – max righe per messaggio.
+- `maxLineLen` (int, const 60) – max caratteri per riga.
+
+**Rendering coordinate:**
+```
+pixel x = col * fontSize
+pixel y = (row + 1) * fontSize   // baseline alfabetico
+```
+
+**Interfaccia:**
+- `assignMessage(topic, payload)`:
+  - Costruisce array di righe (riga 0 = topic, righe 1+ = payload pretty-print).
+  - Misura `blockCols` (lunghezza riga max) e `blockRows` (conteggio righe).
+  - Cerca posizione libera (12 attempt), aggiunge alla queue.
+- `renderColumnContent(ctx, col, x, y, drops)`:
+  - Controlla `isCellOccupied(col, gridRow)`.
+  - Se true → return (skip char), altrimenti disegna Katakana.
+- `renderInlineChars(ctx)`:
+  - Loop su `msgQueue`, disegna tutte le righe di ogni messaggio attivo.
+- `onColumnWrap(col)` → no-op.
+- `initializeColumns(numCols)` → reset `msgQueue = []`.
+
+**Uso:**
+Esperienza visiva pulita: i messaggi MQTT "si materializzano" nella pioggia senza interruzioni o box visibili. Ideale per dashboard wallpaper dove l'estetica Matrix deve rimanere dominante.
+
+**Differenze vs Horizontal Overlay:**
+- Nessun `fillRect` per background → zero box visibili.
+- Char MQTT ridisegnati ogni frame ad alta brightness, non gestiti dal fade della pioggia.
+- Queue centralizzata invece di mappa statica (più efficiente per molti messaggi).
+
+---
+
+### 6.6 Modalità 4 – Horizontal Overlay (*legacy*) (`HorizontalOverlayRenderer`)
+
+**Comportamento:**
+- Rain verticale + messaggi MQTT orizzontali con background box scuro.
+- I messaggi appaiono come "widget" sovrapposti alla pioggia.
+- Background `fillRect` rende i messaggi sempre leggibili ma visivamente separati dal rain.
+
+**Interfaccia:**
+- `assignMessage(topic, payload)`:
+  - Misura dimensioni testo, cerca posizione libera (AABB collision).
+  - Disegna background box (`fillRect`) e poi testo sopra.
+  - Aggiorna mappa statica delle celle occupate.
+- `renderColumnContent(ctx, col, x, y, drops)`:
+  - Disegna Katakana su tutte le colonne (non interagisce con overlay).
+- `renderOverlay(ctx)` (*chiamato da MatrixCanvas.qml*):
+  - Ridisegna tutti i box attivi ogni frame.
+- `onColumnWrap(col)` → no-op.
+
+**Parametri:**
+- `displayDuration` (ms, default 3000).
+- `maxMessages` (int, default 5).
+
+**Uso:**
+Legacy mode. Sostituito da Horizontal Inline (mode 3) per estetica migliore.
+
+---
+
+### 6.7 Modalità 5 – MQTT Driven (`MqttDrivenRenderer`)
+
+**Comportamento:**
+- I messaggi MQTT **non** sono visualizzati direttamente.
+- Invece, influenzano i parametri del rain (velocità, colore, jitter) per colonna.
+- Mapping esempio:
+  - `temperature` → velocità drop.
+  - `brightness` → intensità colore.
+  - `state` → cambio palette.
+
+**Interfaccia:**
+- `assignMessage(topic, payload)`:
+  - Parsa payload per estrarre chiavi significative.
+  - Assegna metriche a colonne specifiche (es. round-robin).
+  - Modifica parametri interni (`dropSpeed[col]`, `colorIntensity[col]`).
+- `renderColumnContent(ctx, col, x, y, drops)`:
+  - Disegna Katakana con parametri modificati per quella colonna.
+- `onColumnWrap(col)` → resetta parametri a default.
+
+**Uso:**
+Data-driven art: l'aspetto visivo riflette lo stato del sistema senza text overlay.
+
+---
+
+### 6.8 Selezione della modalità
+
+La modalità attiva è controllata da:
+- **`main.qml`** → `property int renderMode` (0–5).
+- **Configurazione UI** → `config.qml` → spinner selection.
+
+Quando l'utente cambia modalità:
+1. `MatrixCanvas.qml` rileva il cambio di `renderMode`.
+2. Chiama `initializeColumns(numCols)` sul nuovo renderer.
+3. Reset drops e timer.
+
+### 6.9 Best practices per nuovi renderer
+
+Se si implementa una nuova modalità (es. mode 6), seguire:
+
+1. **Interfaccia obbligatoria**:
+   ```qml
+   function assignMessage(topic, payload)   // gestione arrivo MQTT
+   function renderColumnContent(ctx, col, x, y, drops)  // per-column rendering
+   function onColumnWrap(col)               // reset stato colonna
+   function initializeColumns(numCols)      // setup iniziale/resize
+   ```
+
+2. **Interfaccia opzionale**:
+   ```qml
+   function renderInlineChars(ctx)         // pass 2 rendering (post-rain)
+   function renderOverlay(ctx)             // overlay widgets (deprecated)
+   ```
+
+3. **Binding property obbligatorie**:
+   - `fontSize`, `baseColor`, `jitter`, `glitchChance`, `palettes`, `paletteIndex`, `colorMode`.
+   - `canvasWidth`, `canvasHeight`.
+   - `columns`, `columnAssignments` (compatibility stub).
+
+4. **Timer e performance**:
+   - Operazioni pesanti (es. JSON parse, network fetch) → fuori da `renderColumnContent`.
+   - Timer interni → `interval >= 1000 ms` preferibile.
+   - Evitare `Object.keys()` o flat map di `canvasWidth × canvasHeight` elementi.
+
+5. **Coordinate grid consistency**:
+   ```
+   gridCol = Math.floor(pixelX / fontSize)
+   gridRow = Math.floor(pixelY / fontSize)
+   pixelX  = gridCol * fontSize
+   pixelY  = (gridRow + 1) * fontSize   // baseline alfabetico
+   ```
+
+---
+
+## 7. Estensioni future
 
 Questo documento può essere esteso con:
 
