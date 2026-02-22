@@ -437,12 +437,11 @@ MatrixRain espone diverse modalità di rendering che determinano come i messaggi
 
 | # | Nome display | Componente | Descrizione breve |
 |---|---|---|---|
-| 0 | Matrix Only | `ClassicRenderer.qml` | Pioggia Matrix pura, nessun MQTT visibile |
-| 1 | MQTT Only | `MqttOnlyRenderer.qml` | Solo messaggi MQTT verticali, nessuna pioggia |
-| 2 | Mixed Mode | `MixedModeRenderer.qml` | Rain verticale + messaggi MQTT verticali in colonne dedicate |
-| 3 | Horizontal Inline | `HorizontalInlineRenderer.qml` | Matrix Inject: messaggi orizzontali iniettati nella pioggia |
-| 4 | Horizontal Overlay (*legacy*) | `HorizontalOverlayRenderer.qml` | Background boxes per messaggi orizzontali |
-| 5 | MQTT Driven | `MqttDrivenRenderer.qml` | Messaggi MQTT guidano velocità/colore drops |
+| 0 | Mixed | `MixedModeRenderer.qml` | Rain verticale + messaggi MQTT in colonne dedicate |
+| 1 | MQTT Only | `MqttOnlyRenderer.qml` | Solo messaggi MQTT verticali, nessuna pioggia casuale |
+| 2 | MQTT Driven | `MqttDrivenRenderer.qml` | Colonne attive su arrivo messaggi, effetto burst |
+
+Nota: `ClassicRenderer.qml` viene usato come fallback automatico quando `mqttEnable=false` (non è una modalità selezionabile da `mqttRenderMode`).
 
 ### 6.2 Modalità 0 – Matrix Only (`ClassicRenderer`)
 
@@ -514,102 +513,7 @@ Bilanciamento visuale: estetica Matrix + visibilità dati MQTT.
 
 ---
 
-### 6.5 Modalità 3 – Horizontal Inline (`HorizontalInlineRenderer`) 🆕
-
-**Comportamento:**
-I messaggi MQTT vengono **iniettati direttamente nella griglia del rain** senza background visibile. I caratteri MQTT sono parte della pioggia stessa, non un overlay separato.
-
-**Meccanismo (two-pass rendering):**
-
-1. **Pass 1 – `renderColumnContent(ctx, col, x, y, drops)`**:
-   - Chiamato una volta per colonna per frame alla posizione del drop head.
-   - Se la cella grid `(col, gridRow)` è occupata da un messaggio MQTT attivo → `return` senza disegnare niente.
-   - Il drop avanza comunque normalmente (ritmo del rain inalterato).
-   - Altrimenti: disegna char Katakana random (pioggia normale).
-
-2. **Pass 2 – `renderInlineChars(ctx)`**:
-   - Chiamato una volta per frame dopo il loop dei drop.
-   - Per ogni messaggio attivo nella queue:
-     - Disegna ogni riga di testo con un singolo `ctx.fillText(line, x, y)` – **nessun `fillRect` di background**.
-     - Brightness elevato (0.85 per payload, 0.40 per topic) per resistere al global fade (Step 1 del canvas).
-     - I char MQTT rimangono leggibili finché il messaggio non scade.
-   - Dopo scadenza: smette di ridisegnare → i char sfumano naturalmente con il rain.
-
-**Queue e collision:**
-- `msgQueue` FIFO con capacità `maxMessages` (default 15).
-- Ogni messaggio occupa un rettangolo AABB `(col, row, blockCols, blockRows)`.
-- Placement: fino a 12 tentativi random per trovare una posizione libera (no overlap).
-- Se la queue è piena, il messaggio più vecchio viene rimosso prima di aggiungere il nuovo.
-- Timer 1 Hz (`purgeExpired()`) rimuove messaggi scaduti dalla queue.
-
-**Performance:**
-- `isCellOccupied()` → O(maxMessages) comparazioni integer per colonna per frame (negligibile).
-- `renderInlineChars()` → max `maxMessages × maxLines` = 15 × 12 = 180 `fillText` per frame.
-- Nessuna mappa flat di celle, nessun loop per-char.
-
-**Parametri:**
-- `displayDuration` (ms, default 3000) – durata visibilità messaggio.
-- `maxMessages` (int, default 15) – capacità massima queue.
-- `maxLines` (int, const 12) – max righe per messaggio.
-- `maxLineLen` (int, const 60) – max caratteri per riga.
-
-**Rendering coordinate:**
-```
-pixel x = col * fontSize
-pixel y = (row + 1) * fontSize   // baseline alfabetico
-```
-
-**Interfaccia:**
-- `assignMessage(topic, payload)`:
-  - Costruisce array di righe (riga 0 = topic, righe 1+ = payload pretty-print).
-  - Misura `blockCols` (lunghezza riga max) e `blockRows` (conteggio righe).
-  - Cerca posizione libera (12 attempt), aggiunge alla queue.
-- `renderColumnContent(ctx, col, x, y, drops)`:
-  - Controlla `isCellOccupied(col, gridRow)`.
-  - Se true → return (skip char), altrimenti disegna Katakana.
-- `renderInlineChars(ctx)`:
-  - Loop su `msgQueue`, disegna tutte le righe di ogni messaggio attivo.
-- `onColumnWrap(col)` → no-op.
-- `initializeColumns(numCols)` → reset `msgQueue = []`.
-
-**Uso:**
-Esperienza visiva pulita: i messaggi MQTT "si materializzano" nella pioggia senza interruzioni o box visibili. Ideale per dashboard wallpaper dove l'estetica Matrix deve rimanere dominante.
-
-**Differenze vs Horizontal Overlay:**
-- Nessun `fillRect` per background → zero box visibili.
-- Char MQTT ridisegnati ogni frame ad alta brightness, non gestiti dal fade della pioggia.
-- Queue centralizzata invece di mappa statica (più efficiente per molti messaggi).
-
----
-
-### 6.6 Modalità 4 – Horizontal Overlay (*legacy*) (`HorizontalOverlayRenderer`)
-
-**Comportamento:**
-- Rain verticale + messaggi MQTT orizzontali con background box scuro.
-- I messaggi appaiono come "widget" sovrapposti alla pioggia.
-- Background `fillRect` rende i messaggi sempre leggibili ma visivamente separati dal rain.
-
-**Interfaccia:**
-- `assignMessage(topic, payload)`:
-  - Misura dimensioni testo, cerca posizione libera (AABB collision).
-  - Disegna background box (`fillRect`) e poi testo sopra.
-  - Aggiorna mappa statica delle celle occupate.
-- `renderColumnContent(ctx, col, x, y, drops)`:
-  - Disegna Katakana su tutte le colonne (non interagisce con overlay).
-- `renderOverlay(ctx)` (*chiamato da MatrixCanvas.qml*):
-  - Ridisegna tutti i box attivi ogni frame.
-- `onColumnWrap(col)` → no-op.
-
-**Parametri:**
-- `displayDuration` (ms, default 3000).
-- `maxMessages` (int, default 5).
-
-**Uso:**
-Legacy mode. Sostituito da Horizontal Inline (mode 3) per estetica migliore.
-
----
-
-### 6.7 Modalità 5 – MQTT Driven (`MqttDrivenRenderer`)
+### 6.5 Modalità 2 – MQTT Driven (`MqttDrivenRenderer`)
 
 **Comportamento:**
 - I messaggi MQTT **non** sono visualizzati direttamente.
@@ -633,11 +537,11 @@ Data-driven art: l'aspetto visivo riflette lo stato del sistema senza text overl
 
 ---
 
-### 6.8 Selezione della modalità
+### 6.6 Selezione della modalità
 
 La modalità attiva è controllata da:
-- **`main.qml`** → `property int renderMode` (0–5).
-- **Configurazione UI** → `config.qml` → spinner selection.
+- **`main.qml`** → `property int mqttRenderMode` (0–2).
+- **Configurazione UI** → `config.qml` → `mqttRenderModeCombo`.
 
 Quando l'utente cambia modalità:
 1. `MatrixCanvas.qml` rileva il cambio di `renderMode`.

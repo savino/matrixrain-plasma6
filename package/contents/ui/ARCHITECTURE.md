@@ -176,7 +176,7 @@ JSON parsing, character tagging, column assignment logic.
        if (!main.mqttEnable) return classicRenderer
        
        switch(main.mqttRenderMode) {
-           case 3: return myRenderer  // New mode
+           case <next-index>: return myRenderer  // New mode
            // ... existing cases
        }
    }

@@ -19,9 +19,8 @@
 //
 //   Step 3 – Optional inline-chars pass (renderInlineChars)
 //     If activeRenderer exposes renderInlineChars(ctx), call it once.
-//     Used by HorizontalInlineRenderer to redraw active MQTT message
-//     chars at full brightness every frame, keeping them visible until
-//     their expiry time despite the global fade of Step 1.
+//     Used by renderers that need a second pass to redraw special chars
+//     at full brightness despite the global fade of Step 1.
 //
 // ─────────────────────────────────────────────────────────────────
 // RENDERER INTERFACE  (methods activeRenderer must implement)
@@ -138,8 +137,7 @@ Canvas {
 
         // ── Step 3: inline-chars pass (optional) ──────────────────────
         // Only called if the renderer implements renderInlineChars().
-        // HorizontalInlineRenderer uses this to keep injected MQTT chars
-        // visible at full brightness until their expiry time.
+        // Keep this generic so future renderers can opt in.
         if (typeof activeRenderer.renderInlineChars === "function") {
             activeRenderer.renderInlineChars(ctx)
         }

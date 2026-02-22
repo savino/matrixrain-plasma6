@@ -53,7 +53,7 @@ WallpaperItem {
     // Human-readable names for each render mode index.
     // Index must match the switch-case in MatrixCanvas.activeRenderer
     // and the ComboBox model order in config.qml.
-    readonly property var renderModeNames: ["Mixed", "MQTT-Only", "MQTT-Driven", "Horizontal Inline"]
+    readonly property var renderModeNames: ["Mixed", "MQTT-Only", "MQTT-Driven"]
 
     // ===== Utility Functions =====
     function writeLog(msg)   { console.log("[MQTTRain] " + msg) }
@@ -61,7 +61,8 @@ WallpaperItem {
 
     function getEffectiveRenderMode() {
         if (!mqttEnable) return "Classic"
-        return renderModeNames[mqttRenderMode]
+        var mode = (mqttRenderMode >= 0 && mqttRenderMode < renderModeNames.length) ? mqttRenderMode : 0
+        return renderModeNames[mode]
     }
 
     // Check if topic should be filtered based on blacklist
@@ -182,22 +183,6 @@ WallpaperItem {
         colorMode:   main.colorMode
     }
 
-    // Render mode 3 – Horizontal Inline (Matrix Inject)
-    // MQTT message chars are injected directly into the rain grid.
-    // Drops skip occupied cells; no background box; no separate widget.
-    HorizontalInlineRenderer {
-        id: horizontalInlineRenderer
-        fontSize:        main.fontSize
-        baseColor:       main.singleColor
-        jitter:          main.jitter
-        glitchChance:    main.glitchChance
-        palettes:        main.palettes
-        paletteIndex:    main.paletteIndex
-        colorMode:       main.colorMode
-        displayDuration: 3000
-        maxMessages:     15
-    }
-
     // ===== Matrix Canvas =====
     MatrixCanvas {
         id: matrixCanvas
@@ -214,7 +199,6 @@ WallpaperItem {
                 case 0:  return mixedRenderer
                 case 1:  return mqttOnlyRenderer
                 case 2:  return mqttDrivenRenderer
-                case 3:  return horizontalInlineRenderer
                 default: return mixedRenderer
             }
         }
@@ -263,7 +247,8 @@ WallpaperItem {
 
     onMqttRenderModeChanged: {
         if (mqttEnable) {
-            writeLog("\uD83C\uDFAD Render mode changed to: " + renderModeNames[mqttRenderMode])
+            var mode = (mqttRenderMode >= 0 && mqttRenderMode < renderModeNames.length) ? mqttRenderMode : 0
+            writeLog("\uD83C\uDFAD Render mode changed to: " + renderModeNames[mode])
             matrixCanvas.initDrops()
             matrixCanvas.requestPaint()
         }
@@ -271,7 +256,8 @@ WallpaperItem {
 
     onMqttEnableChanged: {
         if (mqttEnable) {
-            writeLog("\uD83C\uDFAD Switching to MQTT mode: " + renderModeNames[mqttRenderMode])
+            var mode = (mqttRenderMode >= 0 && mqttRenderMode < renderModeNames.length) ? mqttRenderMode : 0
+            writeLog("\uD83C\uDFAD Switching to MQTT mode: " + renderModeNames[mode])
             mqttConnect()
         } else {
             writeLog("\uD83C\uDFAD Switching to Classic mode (MQTT disabled)")
@@ -298,6 +284,10 @@ WallpaperItem {
     Component.onCompleted: {
         writeLog("=== Matrix Rain MQTT Wallpaper ===")
         if (mqttEnable) {
+            if (mqttRenderMode < 0 || mqttRenderMode >= renderModeNames.length) {
+                writeLog("\u26A0\uFE0F Invalid mqttRenderMode=" + mqttRenderMode + ", falling back to Mixed")
+                mqttRenderMode = 0
+            }
             writeLog("MQTT host=[" + mqttHost + "] port=" + mqttPort + " topic=[" + mqttTopic + "]")
             if (mqttTopicBlacklist.length > 0)
                 writeLog("\uD83D\uDEAB Topic blacklist: [" + mqttTopicBlacklist + "]")
