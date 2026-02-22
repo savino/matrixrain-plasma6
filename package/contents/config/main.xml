@@ -13,6 +13,7 @@
     <Entry key="mqttPort" type="Int"><Default>1883</Default></Entry>
     <Entry key="mqttPath" type="String"><Default>/</Default></Entry>
     <Entry key="mqttTopic" type="String"><Default>zigbee2mqtt/#</Default></Entry>
+    <Entry key="mqttTopicBlacklist" type="String"><Default></Default></Entry>
     <Entry key="mqttUsername" type="String"><Default>mqtt_user</Default></Entry>
     <Entry key="mqttPassword" type="String"><Default>mqtt_user</Default></Entry>
     <Entry key="mqttReconnectInterval" type="Int"><Default>30</Default><Range min="1" max="600"/></Entry>

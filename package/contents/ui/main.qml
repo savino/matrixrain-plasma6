@@ -28,6 +28,7 @@ WallpaperItem {
     property string mqttHost: (main.configuration.mqttHost !== undefined ? main.configuration.mqttHost : "homeassistant.lan").trim()
     property int mqttPort: main.configuration.mqttPort !== undefined ? main.configuration.mqttPort : 1883
     property string mqttTopic: (main.configuration.mqttTopic !== undefined ? main.configuration.mqttTopic : "zigbee2mqtt/#").trim()
+    property string mqttTopicBlacklist: (main.configuration.mqttTopicBlacklist !== undefined ? main.configuration.mqttTopicBlacklist : "").trim()
     property string mqttUsername: (main.configuration.mqttUsername || "").trim()
     property string mqttPassword: (main.configuration.mqttPassword !== undefined && main.configuration.mqttPassword !== null) ? main.configuration.mqttPassword : ""
     property bool mqttDebug: main.configuration.mqttDebug !== undefined ? main.configuration.mqttDebug : false
@@ -62,6 +63,23 @@ WallpaperItem {
         return renderModeNames[mqttRenderMode]
     }
     
+    // Check if topic should be filtered based on blacklist
+    function shouldFilterTopic(topic) {
+        if (!mqttTopicBlacklist || mqttTopicBlacklist.length === 0) {
+            return false
+        }
+        
+        var blacklistItems = mqttTopicBlacklist.split(',')
+        for (var i = 0; i < blacklistItems.length; i++) {
+            var item = blacklistItems[i].trim()
+            if (item.length > 0 && topic.indexOf(item) !== -1) {
+                writeDebug("🚫 Filtered topic: " + topic + " (matches: " + item + ")")
+                return true
+            }
+        }
+        return false
+    }
+    
     // ===== MQTT Client =====
     MQTTClient {
         id: mqttClient
@@ -84,6 +102,12 @@ WallpaperItem {
             var safePayload = (payload != null && payload !== undefined) ? payload.toString() : ""
             
             writeDebug("📨 [" + safeTopic + "] " + safePayload)
+            
+            // Filter blacklisted topics
+            if (shouldFilterTopic(safeTopic)) {
+                return  // Discard the message
+            }
+            
             messagesReceived++
             
             // Update message history for debug overlay
@@ -266,12 +290,19 @@ WallpaperItem {
         }
     }
     
+    onMqttTopicBlacklistChanged: {
+        writeLog("🚫 Topic blacklist updated: [" + mqttTopicBlacklist + "]")
+    }
+    
     // ===== Initialization =====
     Component.onCompleted: {
         writeLog("=== Matrix Rain MQTT Wallpaper ===")
         
         if (mqttEnable) {
             writeLog("MQTT host=[" + mqttHost + "] port=" + mqttPort + " topic=[" + mqttTopic + "]")
+            if (mqttTopicBlacklist.length > 0) {
+                writeLog("🚫 Topic blacklist: [" + mqttTopicBlacklist + "]")
+            }
             writeLog("🔄 Reconnect interval: " + mqttReconnectInterval + "s")
             writeLog("🎭 Render mode: " + renderModeNames[mqttRenderMode])
             Qt.callLater(mqttConnect)
