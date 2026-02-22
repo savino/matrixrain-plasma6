@@ -1,107 +1,116 @@
 # Changelog
 
-## [2.0.0] - 2026-02-18
+All notable changes to MatrixRain Plasma6 Wallpaper will be documented in this file.
 
-### Changed - Major Architectural Refactoring
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-#### Migration from libmosquitto to Qt6 Mqtt Module
+---
 
-**Breaking Changes:**
-- Replaced libmosquitto C library with Qt6::Mqtt module
-- Plugin now requires `qt6-mqtt` package instead of `mosquitto`
-- Build system updated (CMakeLists.txt)
+## [Unreleased]
 
-**Benefits:**
-- ✅ Official Qt Project library (active maintenance)
-- ✅ No external C library dependencies
-- ✅ Available in standard package repos (Arch, Ubuntu, Fedora)
-- ✅ Native Qt C++ API with signals/slots
-- ✅ Better Qt event loop integration
-- ✅ Cleaner code architecture
-- ✅ Full MQTT 3.1, 3.1.1, and 5.0 support
+### Added
+- **Horizontal Inline Renderer (Mode 3)** — "Matrix Inject" rendering mode
+  - MQTT message characters injected directly into rain grid
+  - No background boxes — messages appear as part of the Matrix rain
+  - Two-pass rendering: `renderColumnContent` + `renderInlineChars`
+  - FIFO queue with capacity 15 messages (up from 5)
+  - AABB collision detection with 12 placement attempts
+  - Messages fade naturally after expiry (3s default)
+  - Performance: max 180 fillText/frame, O(15) collision checks per column
 
-#### Files Modified
+### Changed
+- `MatrixCanvas.qml`: rendering pipeline now calls `renderInlineChars()` (Step 3) instead of `renderOverlay()`
+- `main.qml`: render mode 3 now instantiates `HorizontalInlineRenderer` instead of legacy overlay
+- `config.qml`: ComboBox label updated to "Horizontal Inline (Matrix Inject)"
+- Documentation: comprehensive renderer specs added to `docs/mqtt-specs.md` (§6)
 
-**Plugin Implementation:**
-- `plugin/mqttclient.h` - Updated to use `QMqttClient` and `QMqttSubscription`
-- `plugin/mqttclient.cpp` - Complete rewrite using Qt6 Mqtt API
-- `plugin/plugin.cpp` - QML plugin registration (new file)
-- `plugin/CMakeLists.txt` - Changed from `find_library(mosquitto)` to `find_package(Qt6 Mqtt)`
-- `plugin/qmldir` - QML module definition
+### Removed
+- **HorizontalOverlayRenderer.qml** (legacy implementation with background boxes)
+  - Replaced by superior `HorizontalInlineRenderer.qml`
+  - Old implementation had:
+    - Visible black background boxes (broke Matrix aesthetic)
+    - `renderOverlay()` function (incompatible with new pipeline)
+    - Max 5 messages capacity (insufficient for high-traffic MQTT)
+    - Static cell occupation map (memory inefficient)
 
-**Installation & Documentation:**
-- `install.sh` - Updated dependency check for qt6-mqtt
-- `README.md` - Updated installation instructions and technical details
-- `.gitignore` - Added build artifacts and temp files
-- `CHANGELOG.md` - This file
+### Fixed
+- Render mode 3 now correctly displays inline messages without background artifacts
+- MQTT messages no longer appear as separate UI widgets
+- Drop head collision detection prevents Katakana chars from overwriting MQTT text
 
-### Installation Instructions
+---
 
-**For Arch/Manjaro users:**
-```bash
-sudo pacman -S qt6-mqtt
-```
+## Migration Notes
 
-**For Ubuntu/Debian users:**
-```bash
-sudo apt install libqt6mqtt6-dev
-```
+### For users upgrading from previous versions:
 
-**For Fedora users:**
-```bash
-sudo dnf install qt6-qtmqtt-devel
-```
+**What changed:**
+- When you select **"Horizontal Inline (Matrix Inject)"** in the settings, messages now blend seamlessly into the rain
+- No more black boxes around MQTT text
+- You can have up to 15 messages visible simultaneously (vs 5 before)
 
-Then:
-```bash
-git pull origin main
-./install.sh
-```
+**Recommended actions:**
+1. Pull latest changes: `git pull origin main`
+2. Reinstall wallpaper: `kpackagetool6 --type=Plasma/Wallpaper --upgrade package/`
+3. Restart Plasma: `plasmashell --replace &`
+4. Open wallpaper settings → MQTT & Network → Render Mode
+5. Select **"Horizontal Inline (Matrix Inject)"**
 
-### Technical Details
+**If you see old behavior (black boxes):**
+- Your Plasma session is caching old code
+- Force full restart:
+  ```bash
+  killall plasmashell
+  kquitapp6 plasmashell
+  plasmashell &
+  ```
 
-**Old Architecture:**
-- C library: libmosquitto (Eclipse Mosquitto)
-- Manual event loop integration with QTimer
-- Direct C API calls
-- Custom threading management
+### For developers extending the renderer:
 
-**New Architecture:**
-- Qt module: Qt6::Mqtt (official Qt Project)
-- Native Qt event loop integration
-- Qt signals/slots pattern
-- Automatic threading via Qt framework
+**New renderer interface (as of this release):**
 
-### API Compatibility
-
-QML interface remains **100% compatible**. No changes required in:
-- `package/contents/ui/main.qml`
-- `package/contents/ui/config.qml`
-- Wallpaper configuration
-- User settings
-
-The same properties and signals are exposed:
 ```qml
-MQTTClient {
-    host: "homeassistant.lan"
-    port: 1883
-    topic: "zigbee2mqtt/#"
-    username: "user"
-    password: "pass"
-    
-    onMessageReceived: (topic, payload) => { ... }
-    onConnectionError: (error) => { ... }
-}
+// Required functions:
+function initializeColumns(numColumns)
+function renderColumnContent(ctx, columnIndex, x, y, drops)
+function onColumnWrap(columnIndex)
+
+// Optional functions:
+function renderInlineChars(ctx)  // Called AFTER rain loop (Step 3)
+
+// Required properties (set by MatrixCanvas):
+property int canvasWidth
+property int canvasHeight
+property real fadeStrength
+property real jitter
+```
+
+**Breaking changes:**
+- `renderOverlay(ctx)` is **deprecated** — use `renderInlineChars(ctx)` instead
+- `HorizontalOverlayRenderer` class removed — use `HorizontalInlineRenderer`
+- If your custom renderer used overlay boxes, migrate to inline grid injection
+
+**Coordinate system (unchanged):**
+```javascript
+gridCol = Math.floor(pixelX / fontSize)
+gridRow = Math.floor(pixelY / fontSize)
+pixelX  = gridCol * fontSize
+pixelY  = (gridRow + 1) * fontSize   // baseline for alphabetic text
 ```
 
 ---
 
-## [1.0.0] - 2026-02-17
+## [Previous Releases]
 
-### Added
-- Initial C++ plugin implementation using libmosquitto
-- MQTT integration with native TCP protocol
-- Matrix rain visual effects
-- Configurable wallpaper settings
-- Debug overlay
-- Auto-reconnection logic
+### v0.9.x — Pre-inline era
+- Initial MQTT integration
+- Modes 0-2: Classic, Mixed, MQTT-Only, MQTT-Driven
+- Legacy Horizontal Overlay (mode 3) with background boxes
+
+---
+
+## Links
+
+- [Repository](https://github.com/savino/matrixrain-plasma6)
+- [Renderer Documentation](docs/mqtt-specs.md#6-modalit%C3%A0-di-rendering-mqtt-renderers)
+- [Architecture Overview](docs/ARCHITECTURE.md)
