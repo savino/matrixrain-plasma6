@@ -217,11 +217,12 @@ ColumnLayout {
                 id: mqttRenderModeCombo
                 // Index must stay in sync with renderModeNames[] in main.qml
                 // and the switch-case in MatrixCanvas.activeRenderer.
+                // Mode 3 (Horizontal Inline) is the recommended display mode.
                 model: [
                     qsTr("Mixed (MQTT + Random)"),
                     qsTr("MQTT Only (Loop messages)"),
                     qsTr("MQTT Driven (On message)"),
-                    qsTr("MQTT Inline (Substitution)")
+                    qsTr("Horizontal Inline (Matrix Inject)")
                 ]
                 enabled: mqttEnable.checked
                 KirigamiLayouts.FormData.label: qsTr("Render Mode")
