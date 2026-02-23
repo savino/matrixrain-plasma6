@@ -1,5 +1,7 @@
 #include "mqttclient.h"
 #include <QDebug>
+#include <QCoreApplication>
+#include <QGuiApplication>
 #include <QTcpSocket>
 #include <QTimer>
 
@@ -20,6 +22,11 @@ MQTTClient::MQTTClient(QObject *parent)
     connect(m_client, &QMqttClient::stateChanged, this, [](QMqttClient::ClientState s) {
         qDebug() << "📊 MQTT state:" << s;
     });
+
+    if (auto *app = qobject_cast<QGuiApplication *>(QCoreApplication::instance())) {
+        connect(app, &QGuiApplication::applicationStateChanged,
+                this, &MQTTClient::onAppStateChanged);
+    }
 
     m_connackTimer->setSingleShot(true);
     m_connackTimer->setInterval(5000);
@@ -255,6 +262,20 @@ void MQTTClient::attemptReconnect()
 
     qDebug() << "🔄 Attempting reconnection to" << m_host << ":" << m_port;
     connectToHost();
+}
+
+void MQTTClient::onAppStateChanged(Qt::ApplicationState state)
+{
+    if (state != Qt::ApplicationActive) return;
+    if (!m_shouldBeConnected) return;
+
+    if (connected()) {
+        qDebug() << "🔄 App active: re-subscribing to topic";
+        updateSubscription();
+    } else {
+        qDebug() << "🔄 App active: reconnecting to broker";
+        attemptReconnect();
+    }
 }
 
 void MQTTClient::updateSubscription()

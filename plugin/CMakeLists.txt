@@ -10,7 +10,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build)
 
 # Find Qt6 modules
-find_package(Qt6 REQUIRED COMPONENTS Core Qml Mqtt)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Mqtt)
 
 if(NOT Qt6Mqtt_FOUND)
     message(FATAL_ERROR "
@@ -37,6 +37,7 @@ add_library(mqttrainplugin SHARED ${PLUGIN_SOURCES})
 
 target_link_libraries(mqttrainplugin
     Qt6::Core
+    Qt6::Gui
     Qt6::Qml
     Qt6::Mqtt
 )
@@ -54,6 +55,7 @@ message(STATUS "====================================================")
 message(STATUS "MQTT Rain C++ Plugin Configuration")
 message(STATUS "====================================================")
 message(STATUS "Qt6 Core:  ${Qt6Core_DIR}")
+message(STATUS "Qt6 Gui:   ${Qt6Gui_DIR}")
 message(STATUS "Qt6 Qml:   ${Qt6Qml_DIR}")
 message(STATUS "Qt6 Mqtt:  ${Qt6Mqtt_DIR}")
 message(STATUS "Install prefix: ${CMAKE_INSTALL_PREFIX}")

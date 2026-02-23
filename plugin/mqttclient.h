@@ -56,6 +56,7 @@ private slots:
     void onMessageReceived(const QMqttMessage &message);
     void onErrorChanged(QMqttClient::ClientError error);
     void attemptReconnect();
+    void onAppStateChanged(Qt::ApplicationState state);
 
 private:
     void updateSubscription();

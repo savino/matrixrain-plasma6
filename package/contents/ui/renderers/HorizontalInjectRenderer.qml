@@ -86,23 +86,107 @@ Item {
         // Verranno rimosse solo quando un drop Katakana ci passa sopra
     }
 
+    function isAreaFree(startCol, startRow, width, height, nowMs) {
+        // Controlla se l'area rettangolare è libera da celle MQTT attive
+        for (var r = startRow; r < startRow + height && r < rows; r++) {
+            for (var c = startCol; c < startCol + width && c < columns; c++) {
+                var key = cellKey(c, r)
+                var cell = mqttCells[key]
+                if (cell && cell.expiresAt > nowMs) {
+                    return false  // Area occupata da cella attiva
+                }
+            }
+        }
+        return true
+    }
+
     function assignMessage(topic, payload) {
         if (columns <= 0) return
 
         ensureGridMetrics()
 
-        var chars = Logic.buildDisplayChars(topic, payload)
-        if (!chars || chars.length === 0) return
+        var safePayload = (payload != null && payload !== undefined) ? payload.toString() : ""
+        if (safePayload.trim().length === 0) return
 
         cleanupExpiredCells(Date.now())
 
-        var row = Math.floor(Math.random() * rows)
-        var startCol = Math.floor(Math.random() * columns)
-        var expiresAt = Date.now() + mqttCellLifetimeMs
+        var safeTopic = (topic != null && topic !== undefined) ? topic.toString() : ""
 
-        for (var i = 0; i < chars.length; i++) {
-            var col = (startCol + i) % columns
-            setCell(col, row, chars[i], expiresAt)
+        // Tenta pretty print JSON
+        var displayText = safePayload
+        var isJson = false
+        try {
+            var parsed = JSON.parse(safePayload)
+            if (parsed !== null && typeof parsed === "object") {
+                displayText = JSON.stringify(parsed, null, 2)
+                isJson = true
+            }
+        } catch(e) {
+            // Non JSON valido, usa payload originale
+        }
+
+        // Costruisci righe (topic + payload)
+        var lines = []
+        if (safeTopic.length > 0) {
+            lines.push({ text: "topic: " + safeTopic, isJson: false })
+        }
+        var payloadLines = displayText.split('\n')
+        for (var i = 0; i < payloadLines.length; i++) {
+            lines.push({ text: payloadLines[i], isJson: isJson })
+        }
+
+        var maxLineLength = 0
+        for (var j = 0; j < lines.length; j++) {
+            if (lines[j].text.length > maxLineLength) {
+                maxLineLength = lines[j].text.length
+            }
+        }
+
+        var msgHeight = lines.length
+        var msgWidth = Math.min(maxLineLength, columns)
+
+        // Cerca posizione libera (max 10 tentativi)
+        var placed = false
+        var startRow, startCol
+        var now = Date.now()
+        var expiresAt = now + mqttCellLifetimeMs
+
+        for (var attempt = 0; attempt < 10 && !placed; attempt++) {
+            startRow = Math.floor(Math.random() * Math.max(1, rows - msgHeight + 1))
+            startCol = Math.floor(Math.random() * Math.max(1, columns - msgWidth + 1))
+            
+            if (isAreaFree(startCol, startRow, msgWidth, msgHeight, now)) {
+                placed = true
+            }
+        }
+
+        // Se non trovato spazio, usa ultima posizione comunque
+        if (!placed) {
+            startRow = Math.floor(Math.random() * rows)
+            startCol = Math.floor(Math.random() * Math.max(1, columns - msgWidth + 1))
+        }
+
+        // Piazza le celle per ogni riga del messaggio
+        for (var lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+            var line = lines[lineIdx]
+            var row = startRow + lineIdx
+            if (row >= rows) break
+
+            // Converti la linea in array di char con colorazione JSON
+            var lineChars = []
+            if (line.isJson) {
+                Logic.colorJsonChars(line.text, lineChars)
+            }
+            if (lineChars.length === 0) {
+                for (var k = 0; k < line.text.length; k++) {
+                    lineChars.push({ ch: line.text.charAt(k), isValue: false })
+                }
+            }
+
+            for (var charIdx = 0; charIdx < lineChars.length && charIdx < msgWidth; charIdx++) {
+                var col = (startCol + charIdx) % columns
+                setCell(col, row, lineChars[charIdx], expiresAt)
+            }
         }
     }
 
@@ -157,12 +241,14 @@ Item {
 
             var color = (colorMode === 0)
                 ? baseColor.toString()
-                : palettes[paletteIndex][cell.col % palettes[paletteIndex].length]
+                : palettes[paletteIndex][0]
 
             var x = cell.col * fontSize
             var y = cell.row * fontSize
 
-            ctx.fillStyle = color
+            ctx.fillStyle = cell.isValue
+                ? ColorUtils.lightenColor(color, 0.55)
+                : color
             ctx.fillText(cell.ch, x, y)
         }
     }
