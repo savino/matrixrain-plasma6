@@ -159,14 +159,10 @@ Item {
                 ? baseColor.toString()
                 : palettes[paletteIndex][cell.col % palettes[paletteIndex].length]
 
-            var brightColor = cell.isValue
-                ? ColorUtils.lightenColor(color, 0.70)
-                : ColorUtils.lightenColor(color, 0.55)
-
             var x = cell.col * fontSize
             var y = cell.row * fontSize
 
-            ctx.fillStyle = brightColor
+            ctx.fillStyle = color
             ctx.fillText(cell.ch, x, y)
         }
     }
