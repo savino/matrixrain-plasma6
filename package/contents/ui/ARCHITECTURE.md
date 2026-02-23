@@ -123,6 +123,7 @@ activeRenderer: {
         case 0: return mixedRenderer      // Mixed MQTT + random
         case 1: return mqttOnlyRenderer   // MQTT only
         case 2: return mqttDrivenRenderer // On-demand
+        case 3: return horizontalInjectRenderer // Horizontal inject cells
         default: return mixedRenderer
     }
 }

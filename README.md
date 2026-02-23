@@ -161,6 +161,7 @@ module "ObsidianReq.MQTTRain" is not installed
    - **Mixed (MQTT + Random)**: Default mode, MQTT in columns when available, random Matrix chars otherwise
    - **MQTT Only (Loop messages)**: All columns show messages from pool, no random chars
    - **MQTT Driven (On message)**: Columns activate only when messages arrive, dramatic effect
+   - **Horizontal Inject**: MQTT chars become temporary obstacle cells on the rain grid (3s), redrawn each frame for readability
 8. **Debug Overlay** - Show connection status, message history, render mode, statistics on screen
 9. **Debug MQTT logging** - Print full MQTT messages to the system journal (off by default)
 
@@ -215,6 +216,7 @@ The wallpaper uses a **component-based architecture** with pluggable renderers:
 - **MixedModeRenderer**: Mixed MQTT + random characters
 - **MqttOnlyRenderer**: MQTT messages only, loop from pool
 - **MqttDrivenRenderer**: On-demand column activation
+- **HorizontalInjectRenderer**: Horizontal MQTT cell injection with obstacle-skip rain
 
 **Utilities**:
 - **ColorUtils.js**: Color manipulation (lighten for value highlighting)

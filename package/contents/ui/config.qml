@@ -220,7 +220,8 @@ ColumnLayout {
                 model: [
                     qsTr("Mixed (MQTT + Random)"),
                     qsTr("MQTT Only (Loop messages)"),
-                    qsTr("MQTT Driven (On message)")
+                    qsTr("MQTT Driven (On message)"),
+                    qsTr("Horizontal Inject")
                 ]
                 enabled: mqttEnable.checked
                 KirigamiLayouts.FormData.label: qsTr("Render Mode")

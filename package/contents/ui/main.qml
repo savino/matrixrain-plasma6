@@ -53,7 +53,7 @@ WallpaperItem {
     // Human-readable names for each render mode index.
     // Index must match the switch-case in MatrixCanvas.activeRenderer
     // and the ComboBox model order in config.qml.
-    readonly property var renderModeNames: ["Mixed", "MQTT-Only", "MQTT-Driven"]
+    readonly property var renderModeNames: ["Mixed", "MQTT-Only", "MQTT-Driven", "Horizontal Inject"]
 
     // ===== Utility Functions =====
     function writeLog(msg)   { console.log("[MQTTRain] " + msg) }
@@ -183,6 +183,17 @@ WallpaperItem {
         colorMode:   main.colorMode
     }
 
+    HorizontalInjectRenderer {
+        id: horizontalInjectRenderer
+        fontSize:    main.fontSize
+        baseColor:   main.singleColor
+        jitter:      main.jitter
+        glitchChance: main.glitchChance
+        palettes:    main.palettes
+        paletteIndex: main.paletteIndex
+        colorMode:   main.colorMode
+    }
+
     // ===== Matrix Canvas =====
     MatrixCanvas {
         id: matrixCanvas
@@ -199,6 +210,7 @@ WallpaperItem {
                 case 0:  return mixedRenderer
                 case 1:  return mqttOnlyRenderer
                 case 2:  return mqttDrivenRenderer
+                case 3:  return horizontalInjectRenderer
                 default: return mixedRenderer
             }
         }

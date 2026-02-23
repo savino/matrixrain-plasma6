@@ -440,6 +440,7 @@ MatrixRain espone diverse modalità di rendering che determinano come i messaggi
 | 0 | Mixed | `MixedModeRenderer.qml` | Rain verticale + messaggi MQTT in colonne dedicate |
 | 1 | MQTT Only | `MqttOnlyRenderer.qml` | Solo messaggi MQTT verticali, nessuna pioggia casuale |
 | 2 | MQTT Driven | `MqttDrivenRenderer.qml` | Colonne attive su arrivo messaggi, effetto burst |
+| 3 | Horizontal Inject | `HorizontalInjectRenderer.qml` | Celle MQTT orizzontali a TTL 3s, ridisegnate ogni frame e trattate come ostacoli dal rain |
 
 Nota: `ClassicRenderer.qml` viene usato come fallback automatico quando `mqttEnable=false` (non è una modalità selezionabile da `mqttRenderMode`).
 
@@ -540,7 +541,7 @@ Data-driven art: l'aspetto visivo riflette lo stato del sistema senza text overl
 ### 6.6 Selezione della modalità
 
 La modalità attiva è controllata da:
-- **`main.qml`** → `property int mqttRenderMode` (0–2).
+- **`main.qml`** → `property int mqttRenderMode` (0–3).
 - **Configurazione UI** → `config.qml` → `mqttRenderModeCombo`.
 
 Quando l'utente cambia modalità:
