@@ -82,14 +82,8 @@ Item {
     }
 
     function cleanupExpiredCells(nowMs) {
-        var keys = Object.keys(mqttCells)
-        for (var i = 0; i < keys.length; i++) {
-            var key = keys[i]
-            var cell = mqttCells[key]
-            if (!cell || cell.expiresAt <= nowMs) {
-                removeCellByKey(key)
-            }
-        }
+        // Non rimuoviamo le celle scadute - lasciamole fare fade naturale
+        // Verranno rimosse solo quando un drop Katakana ci passa sopra
     }
 
     function assignMessage(topic, payload) {
@@ -122,7 +116,12 @@ Item {
         var cell = mqttCells[key]
         if (cell) {
             if (cell.expiresAt > Date.now()) {
-                return
+                return  // Salto ostacolo: cella MQTT ancora attiva
+            }
+            // Cella scaduta: applica fade accelerato (equivalente a ~30 frame di fade naturale)
+            for (var i = 0; i < 30; i++) {
+                ctx.fillStyle = "rgba(0,0,0," + fadeStrength + ")"
+                ctx.fillRect(x, y - fontSize, fontSize, fontSize)
             }
             removeCellByKey(key)
         }
@@ -152,6 +151,9 @@ Item {
         for (var i = 0; i < keys.length; i++) {
             var cell = mqttCells[keys[i]]
             if (!cell) continue
+            
+            // Non ridisegnare celle scadute (lasciale fare fade naturale)
+            if (cell.expiresAt <= now) continue
 
             var color = (colorMode === 0)
                 ? baseColor.toString()
@@ -161,8 +163,11 @@ Item {
                 ? ColorUtils.lightenColor(color, 0.70)
                 : ColorUtils.lightenColor(color, 0.55)
 
+            var x = cell.col * fontSize
+            var y = cell.row * fontSize
+
             ctx.fillStyle = brightColor
-            ctx.fillText(cell.ch, cell.col * fontSize, cell.row * fontSize)
+            ctx.fillText(cell.ch, x, y)
         }
     }
 
