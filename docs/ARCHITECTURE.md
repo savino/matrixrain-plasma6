@@ -11,7 +11,7 @@ This document describes the internal architecture of the MatrixRain Plasma 6 wal
 ```
 ┌──────────────────────────────────────────────────────┐
 │                  KDE Plasma Shell                    │
-│  (systemd --user service, reads environment.d)      │
+│  (systemd --user service, system QML path or env.d)  │
 └────────────────────┬─────────────────────────────────┘
                      │
                      │ QML Plugin Import
@@ -34,6 +34,11 @@ This document describes the internal architecture of the MatrixRain Plasma 6 wal
          │ (Mosquitto, HiveMQ..) │
          └───────────────────────┘
 ```
+
+The distro package installs the plugin into the system Qt QML import path and
+the wallpaper into Plasma's system wallpaper directory. The developer installer
+uses `~/.local/lib/qt6/qml/` for the plugin, so it configures `environment.d` for
+systemd-launched Plasma to discover that user-local import path.
 
 ### Data Flow
 

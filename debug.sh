@@ -5,7 +5,23 @@ echo "  MQTT Rain Plugin - Debug Information"
 echo "====================================================="
 echo ""
 
-PLUGIN_DIR="${HOME}/.local/lib/qt6/qml/ObsidianReq/MQTTRain"
+USER_PLUGIN_DIR="${HOME}/.local/lib/qt6/qml/ObsidianReq/MQTTRain"
+SYSTEM_QML_DIR=""
+if command -v qmake6 >/dev/null 2>&1; then
+    SYSTEM_QML_DIR="$(qmake6 -query QT_INSTALL_QML 2>/dev/null || true)"
+fi
+
+PLUGIN_DIR="${USER_PLUGIN_DIR}"
+for candidate in \
+    "${USER_PLUGIN_DIR}" \
+    "${SYSTEM_QML_DIR}/ObsidianReq/MQTTRain" \
+    "/usr/lib/qt6/qml/ObsidianReq/MQTTRain" \
+    "/usr/lib/x86_64-linux-gnu/qt6/qml/ObsidianReq/MQTTRain"; do
+    if [ -d "${candidate}" ]; then
+        PLUGIN_DIR="${candidate}"
+        break
+    fi
+done
 
 echo "[1] Plugin Installation"
 echo "────────────────────────────────────────────────────"
@@ -57,11 +73,9 @@ fi
 echo ""
 
 echo "Standard QML import locations:"
-for path in \
-    "$HOME/.local/lib/qt6/qml" \
-    "/usr/lib/qt6/qml" \
-    "/usr/lib/x86_64-linux-gnu/qt6/qml" \
-    "/usr/local/lib/qt6/qml"; do
+for path in "$HOME/.local/lib/qt6/qml" "$SYSTEM_QML_DIR" \
+    "/usr/lib/qt6/qml" "/usr/lib/x86_64-linux-gnu/qt6/qml" "/usr/local/lib/qt6/qml"; do
+    [ -n "$path" ] || continue
     if [ -d "$path" ]; then
         echo "   ✅ $path"
     else
@@ -97,6 +111,9 @@ echo ""
 echo "[6] Wallpaper Package"
 echo "────────────────────────────────────────────────────"
 WALLPAPER_DIR="${HOME}/.local/share/plasma/wallpapers/obsidianreq.plasma.wallpaper.mqttrain"
+if [ ! -d "$WALLPAPER_DIR" ] && [ -d "/usr/share/plasma/wallpapers/obsidianreq.plasma.wallpaper.mqttrain" ]; then
+    WALLPAPER_DIR="/usr/share/plasma/wallpapers/obsidianreq.plasma.wallpaper.mqttrain"
+fi
 if [ -d "$WALLPAPER_DIR" ]; then
     echo "✅ Wallpaper installed: $WALLPAPER_DIR"
     if [ -f "$WALLPAPER_DIR/contents/ui/main.qml" ]; then

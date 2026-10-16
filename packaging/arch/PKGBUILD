@@ -1,0 +1,32 @@
+# Maintainer: Matrix Rain contributors
+pkgname=matrixrain-plasma6-git
+pkgver=r1.0000000
+pkgrel=1
+pkgdesc='MQTT-enabled Matrix Rain wallpaper for KDE Plasma 6'
+arch=('x86_64' 'aarch64')
+url='https://github.com/savino/matrixrain-plasma6'
+license=('GPL-3.0-or-later')
+depends=('plasma-workspace' 'qt6-base' 'qt6-declarative' 'qt6-mqtt')
+makedepends=('cmake' 'git')
+provides=('matrixrain-plasma6')
+conflicts=('matrixrain-plasma6')
+source=("$pkgname::git+https://github.com/savino/matrixrain-plasma6.git")
+sha256sums=('SKIP')
+
+pkgver() {
+    cd "$srcdir/$pkgname"
+    printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+    cmake -S "$srcdir/$pkgname/plugin" -B "$srcdir/$pkgname/build" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DQT_QML_INSTALL_DIR=lib/qt6/qml
+    cmake --build "$srcdir/$pkgname/build" --parallel
+}
+
+package() {
+    DESTDIR="$pkgdir" cmake --install "$srcdir/$pkgname/build" --prefix /usr
+}

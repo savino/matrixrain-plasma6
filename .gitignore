@@ -3,6 +3,10 @@ plugin/build/
 plugin/Build/
 build/
 Build/
+matrixrain-plasma6-wallpaper.zip
+packaging/arch/src/
+packaging/arch/pkg/
+packaging/arch/*.pkg.tar.*
 
 # CMake
 CMakeCache.txt

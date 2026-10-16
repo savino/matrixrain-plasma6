@@ -53,38 +53,73 @@ sudo dnf install cmake qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmqtt-devel
 
 ### Build and Install
 
+#### Arch Linux package
+
+The Arch package installs both the Plasma wallpaper and its native Qt QML plugin
+into system locations. From a clone of this repository:
+
+```bash
+cd packaging/arch
+makepkg -si
+```
+
+#### KDE Store wallpaper archive
+
+To create a Plasma wallpaper package archive for KDE Store or manual KPackage
+installation:
+
+```bash
+./package-kpackage.sh
+```
+
+The archive contains the wallpaper UI only. It still requires the native MQTT
+plugin supplied by a distro package (or installed separately); a compiled Qt
+plugin cannot be distributed as one portable archive across Linux distributions.
+
+#### Developer installation
+
+For local development, the script below builds the plugin and installs the
+wallpaper into the current user's Plasma session:
+
 ```bash
 git clone https://github.com/savino/matrixrain-plasma6.git
 cd matrixrain-plasma6
-chmod +x install.sh
 ./install.sh
 ```
 
 The script will:
-1. Check all dependencies
+1. Check build and Plasma package tools
 2. Build the C++ MQTT plugin
-3. Install the plugin to `~/.local/lib/qt6/qml/`
+3. Install the plugin to `~/.local/lib/qt6/qml/` using CMake install rules
 4. Install the wallpaper package
 5. **Configure systemd user environment** for QML plugin discovery (see below)
 
+Use `./install.sh --help` for non-interactive and environment-setup options.
+If an existing build cache was created from a different checkout path, the
+installer leaves it untouched and configures a new checkout-specific build
+directory under `${XDG_CACHE_HOME:-~/.cache}/matrixrain-plasma6/`.
+
 ---
 
-## ⚠️ Critical: QML Plugin Path (systemd environment.d)
+## Developer installs: QML plugin path (systemd environment.d)
 
-This wallpaper uses a **native C++ QML plugin** (`libmqttrainplugin.so`) installed in
-`~/.local/lib/qt6/qml/`. KDE Plasma's `plasmashell` is launched by **systemd --user**
-and does NOT read shell rc files like `~/.bashrc` or `~/.zshrc`.
+The developer installer puts the **native C++ QML plugin** (`libmqttrainplugin.so`)
+under `~/.local/lib/qt6/qml/`. KDE Plasma's `plasmashell` is launched by
+**systemd --user** and does NOT read shell rc files like `~/.bashrc` or `~/.zshrc`.
 
-The plugin path must be declared in **`~/.config/environment.d/99-mqttrain-qt.conf`**
-so systemd loads it before starting any user service.
+For this user-local install, the plugin path must be declared in
+`~/.config/environment.d/99-mqttrain-qt.conf` so systemd loads it before starting
+Plasma. The developer installer adds the missing entries without replacing any
+existing file contents. This environment setup is not needed for a distro package:
+it installs the plugin into the system Qt QML import directory.
 
 ### What the install script does
 
-The script creates:
+The script updates:
 ```bash
 ~/.config/environment.d/99-mqttrain-qt.conf
 ```
-with content:
+with entries equivalent to:
 ```bash
 QML_IMPORT_PATH=/home/user/.local/lib/qt6/qml${QML_IMPORT_PATH:+:${QML_IMPORT_PATH}}
 QML2_IMPORT_PATH=/home/user/.local/lib/qt6/qml${QML2_IMPORT_PATH:+:${QML2_IMPORT_PATH}}
@@ -119,7 +154,7 @@ If you see:
 module "ObsidianReq.MQTTRain" is not installed
 ```
 
-1. Check the environment.d file exists:
+1. For a developer install, check the environment.d file exists:
    ```bash
    cat ~/.config/environment.d/99-mqttrain-qt.conf
    ```
@@ -127,7 +162,7 @@ module "ObsidianReq.MQTTRain" is not installed
    ```bash
    ls ~/.local/lib/qt6/qml/ObsidianReq/MQTTRain/
    ```
-3. **Log out and log back in** (or reboot)
+3. For developer installs, **log out and log back in** (or reboot)
 4. Check systemd picked up the variable:
    ```bash
    systemctl --user show-environment | grep QML
@@ -243,11 +278,11 @@ The wallpaper uses a **component-based architecture** with pluggable renderers:
 ### Building Manually
 
 ```bash
-cd plugin
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$HOME/.local
-make -j$(nproc)
-make install
+cmake -S plugin -B plugin/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+cmake --build plugin/build --parallel
+cmake --install plugin/build --component Plugin
 ```
 
 ## Troubleshooting
@@ -268,10 +303,12 @@ payloads in the journal.
 ```
 module "ObsidianReq.MQTTRain" is not installed
 ```
-- Check `~/.config/environment.d/99-mqttrain-qt.conf` exists and contains correct path
-- **Log out and log back in** (or reboot)
-- Verify with: `systemctl --user show-environment | grep QML`
-- Verify plugin files: `ls ~/.local/lib/qt6/qml/ObsidianReq/MQTTRain/`
+- For a developer install, check `~/.config/environment.d/99-mqttrain-qt.conf`
+  contains the user QML path, then log out and back in (or reboot)
+- For a distro package, verify that the plugin files are in the Qt QML import
+  directory (shown by `qmake6 -query QT_INSTALL_QML`)
+- For developer installs, verify with: `systemctl --user show-environment | grep QML`
+- Verify plugin files under `ObsidianReq/MQTTRain/` in the applicable QML directory
 - Re-run `./install.sh`
 
 **Connection fails / no characters:**
@@ -341,10 +378,10 @@ matrixrain-plasma6/
 4. Add to `activeRenderer` switch
 5. Update `main.xml` range and `config.qml` ComboBox
 
-**To modify MQTT behavior:** edit `plugin/mqttclient.cpp`, then rebuild:
+**To modify MQTT behavior:** edit `plugin/mqttclient.cpp`, then rebuild and reinstall:
 ```bash
-cd plugin/build && make -j$(nproc)
-cp libmqttrainplugin.so ~/.local/lib/qt6/qml/ObsidianReq/MQTTRain/
+cmake --build plugin/build --parallel
+cmake --install plugin/build --component Plugin
 ```
 
 **To modify visual effects:** edit renderer files or canvas, then:

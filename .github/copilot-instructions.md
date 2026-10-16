@@ -7,13 +7,16 @@
 - Renderer strategy files live in `package/contents/ui/renderers/` (`Classic`, `Mixed`, `MqttOnly`, `MqttDriven`).
 
 ## Critical Runtime Constraint
-- QML plugin discovery depends on systemd user environment, not shell rc files.
-- `install.sh` writes `~/.config/environment.d/99-mqttrain-qt.conf` with `QML_IMPORT_PATH`/`QML2_IMPORT_PATH` and runs `systemctl --user daemon-reexec`.
-- A fresh login/reboot is required for plasmashell to inherit that environment.
+- Distro installs place the plugin in the system Qt QML import path; developer installs use `~/.local/lib/qt6/qml/`.
+- For developer installs, QML plugin discovery depends on systemd user environment, not shell rc files.
+- `install.sh` preserves and appends `QML_IMPORT_PATH`/`QML2_IMPORT_PATH` entries in `~/.config/environment.d/99-mqttrain-qt.conf`.
+- A fresh login/reboot is required for plasmashell to inherit a changed user environment.
 
 ## Developer Workflows
 - Full install: `./install.sh` (builds plugin, installs wallpaper package, configures environment.d).
-- Rebuild plugin only: `cd plugin/build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$HOME/.local && make -j$(nproc)`.
+- Rebuild/install plugin only: `cmake -S plugin -B plugin/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$HOME/.local && cmake --build plugin/build --parallel && cmake --install plugin/build --component Plugin`.
+- Build Arch distro package: `cd packaging/arch && makepkg -si`.
+- Build KDE Store wallpaper archive: `./package-kpackage.sh`.
 - Reload package after QML/config changes: `kpackagetool6 --type Plasma/Wallpaper --upgrade package`.
 - Debug checks: `./debug.sh`, `journalctl -f | grep -i mqttrain`, `systemctl --user show-environment | grep QML`.
 
